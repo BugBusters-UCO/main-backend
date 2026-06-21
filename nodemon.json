@@ -1,0 +1,23 @@
+{
+  "watch": [
+    "server.js",
+    "app.js",
+    "config",
+    "controllers",
+    "dbConnection",
+    "middleware",
+    "models",
+    "routes",
+    "services"
+  ],
+  "ignore": [
+    "workspace/**",
+    "uploads/**",
+    "reports/**",
+    "logs/**",
+    "node_modules/**",
+    ".npm-cache/**"
+  ],
+  "ext": "js,json",
+  "exec": "node server.js"
+}
