@@ -1,7 +1,9 @@
 const { checkScannerHealth } = require("../services/dependencyScannerService");
+const { checkConfigScannerHealth } = require("../services/configScannerService");
 
 async function health(_req, res) {
   let dependencyScanner = { status: "unreachable" };
+  let configScanner = { status: "unreachable" };
 
   try {
     dependencyScanner = await checkScannerHealth();
@@ -12,10 +14,20 @@ async function health(_req, res) {
     };
   }
 
+  try {
+    configScanner = await checkConfigScannerHealth();
+  } catch (error) {
+    configScanner = {
+      status: "unreachable",
+      message: error.message
+    };
+  }
+
   res.json({
     status: "ok",
     service: "main-backend",
-    dependencyScanner
+    dependencyScanner,
+    configScanner
   });
 }
 

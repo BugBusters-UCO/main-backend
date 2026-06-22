@@ -21,6 +21,14 @@ function createSequelizeInstance() {
   const { Sequelize } = sequelizePackage;
   return new Sequelize(env.databaseUrl, {
     dialect: "postgres",
+    dialectOptions: env.databaseSsl
+      ? {
+          ssl: {
+            require: true,
+            rejectUnauthorized: false
+          }
+        }
+      : {},
     logging: env.nodeEnv === "development" ? console.log : false
   });
 }
@@ -36,6 +44,8 @@ async function connectDatabase() {
     throw new Error("Install sequelize, pg, and pg-hstore and set DATABASE_URL before enabling DB_ENABLED=true");
   }
   await sequelize.authenticate();
+  require("../models");
+  await sequelize.sync();
   console.log("PostgreSQL connected through Sequelize.");
   return sequelize;
 }

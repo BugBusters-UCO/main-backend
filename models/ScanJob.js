@@ -12,6 +12,18 @@ if (sequelize) {
         defaultValue: DataTypes.UUIDV4,
         primaryKey: true
       },
+      userId: {
+        type: DataTypes.UUID,
+        allowNull: true
+      },
+      importedRepositoryId: {
+        type: DataTypes.UUID,
+        allowNull: true
+      },
+      scannerType: {
+        type: DataTypes.ENUM("dependency", "config"),
+        defaultValue: "dependency"
+      },
       sourceType: {
         type: DataTypes.ENUM("github", "zip", "local"),
         allowNull: false
@@ -26,6 +38,14 @@ if (sequelize) {
       },
       result: {
         type: DataTypes.JSONB,
+        allowNull: true
+      },
+      error: {
+        type: DataTypes.TEXT,
+        allowNull: true
+      },
+      completedAt: {
+        type: DataTypes.DATE,
         allowNull: true
       }
     },

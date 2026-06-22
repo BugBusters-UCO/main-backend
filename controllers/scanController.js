@@ -4,16 +4,16 @@ const fs = require("fs");
 const { createJob, getJob, listJobs, updateJob } = require("../services/scanJobStore");
 const { addLog, getLogs, subscribe } = require("../services/logStreamService");
 const { cloneRepository, sanitizeGitError } = require("../services/githubService");
-const { resolveSessionToken } = require("../services/githubAccountService");
+const { getStoredGithubAccount, resolveSessionToken } = require("../services/githubAccountService");
 const { extractZip } = require("../services/zipService");
 const { runDependencyScan } = require("../services/dependencyScannerService");
 const { sendScanReport } = require("../services/mailService");
 
-function startGithubScan(req, res, next) {
+async function startGithubScan(req, res, next) {
   try {
-    const { repoCloneUrl, repoFullName, githubSession, email, includeDev, useOsv, failOn } = req.body;
-    const githubToken = resolveSessionToken(githubSession);
-    const job = createJob(_newJob("github", repoFullName || repoCloneUrl));
+    const { repoCloneUrl, repoFullName, githubSession, email, includeDev, useOsv, failOn, importedRepositoryId } = req.body;
+    const githubToken = await _githubTokenForUser(githubSession, req.user.id);
+    const job = await createJob(_newJob("github", repoFullName || repoCloneUrl, req.user.id, importedRepositoryId));
     res.status(202).json(job);
     _runJob(job.id, { sourceType: "github", sourceLabel: repoFullName, repoUrl: repoCloneUrl, githubToken, email, includeDev, useOsv, failOn }).catch(next);
   } catch (error) {
@@ -21,14 +21,14 @@ function startGithubScan(req, res, next) {
   }
 }
 
-function startZipScan(req, res, next) {
+async function startZipScan(req, res, next) {
   try {
     if (!req.file) {
       return res.status(400).json({ message: "Repository zip file is required" });
     }
 
     const { email, includeDev, useOsv, failOn } = req.body;
-    const job = createJob(_newJob("zip", req.file.originalname));
+    const job = await createJob(_newJob("zip", req.file.originalname, req.user.id, null));
     res.status(202).json(job);
     _runJob(job.id, {
       sourceType: "zip",
@@ -43,20 +43,27 @@ function startZipScan(req, res, next) {
   }
 }
 
-function getScanJob(req, res) {
-  const job = getJob(req.params.jobId);
-  if (!job) {
+async function getScanJob(req, res) {
+  const job = await getJob(req.params.jobId);
+  if (!job || (job.scannerType && job.scannerType !== "dependency")) {
+    return res.status(404).json({ message: "Scan job not found" });
+  }
+  if (job.userId && job.userId !== req.user.id) {
     return res.status(404).json({ message: "Scan job not found" });
   }
   return res.json({ ...job, logs: getLogs(job.id) });
 }
 
-function getScanJobs(_req, res) {
-  res.json(listJobs());
+async function getScanJobs(req, res) {
+  res.json(await listJobs({ userId: req.user.id, scannerType: "dependency" }));
 }
 
-function streamScanLogs(req, res) {
+async function streamScanLogs(req, res) {
   const { jobId } = req.params;
+  const job = await getJob(jobId);
+  if (!job || (job.userId && job.userId !== req.user.id)) {
+    return res.status(404).json({ message: "Scan job not found" });
+  }
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -76,7 +83,7 @@ function streamScanLogs(req, res) {
 
 async function _runJob(jobId, input) {
   const jobStartedAt = Date.now();
-  updateJob(jobId, { status: "running" });
+  await updateJob(jobId, { status: "running" });
   addLog(jobId, "info", "Step 1/7 - Scan job created");
   addLog(jobId, "info", `Using ${input.sourceType === "github" ? "GitHub repository import" : "ZIP upload"} as the source`);
   addLog(jobId, "info", `Scan policy selected: ${_bool(input.includeDev, true) ? "include development dependencies" : "runtime dependencies only"}, ${_bool(input.useOsv, true) ? "OSV vulnerability lookup enabled" : "OSV vulnerability lookup disabled"}, fail on ${input.failOn || "high"}`);
@@ -146,7 +153,7 @@ async function _runJob(jobId, input) {
     addLog(jobId, result.summary?.banking_action === "block" ? "warning" : "info", `Banking exposure decision: ${result.summary?.banking_action || "track"} with score ${result.summary?.banking_exposure_score ?? 0}`);
     addLog(jobId, result.summary?.ci_status === "failed" ? "warning" : "success", `CI gate result: ${result.summary?.ci_status || "unknown"} with risk score ${result.summary?.risk_score ?? 0}`);
     addLog(jobId, "success", `Step 9/9 - Scan completed in ${_seconds(Date.now() - jobStartedAt)}`);
-    const updated = updateJob(jobId, {
+    const updated = await updateJob(jobId, {
       status: "completed",
       result,
       completedAt: new Date().toISOString()
@@ -162,7 +169,7 @@ async function _runJob(jobId, input) {
   } catch (error) {
     const safeMessage = sanitizeGitError(error.message);
     addLog(jobId, "error", safeMessage);
-    updateJob(jobId, {
+    await updateJob(jobId, {
       status: "failed",
       error: safeMessage,
       completedAt: new Date().toISOString()
@@ -175,10 +182,13 @@ async function _runJob(jobId, input) {
   }
 }
 
-function _newJob(sourceType, sourceLabel) {
+function _newJob(sourceType, sourceLabel, userId, importedRepositoryId) {
   const now = new Date().toISOString();
   return {
     id: randomUUID(),
+    userId,
+    importedRepositoryId,
+    scannerType: "dependency",
     sourceType,
     sourceLabel,
     status: "queued",
@@ -217,3 +227,13 @@ module.exports = {
   getScanJobs,
   streamScanLogs
 };
+
+async function _githubTokenForUser(githubSession, userId) {
+  try {
+    return resolveSessionToken(githubSession);
+  } catch (_error) {
+    const account = await getStoredGithubAccount(userId);
+    if (account?.accessToken) return account.accessToken;
+    throw _error;
+  }
+}

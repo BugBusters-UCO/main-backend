@@ -3,16 +3,16 @@ const { randomUUID } = require("crypto");
 const states = new Map();
 const sessions = new Map();
 
-function createOAuthState() {
+function createOAuthState(userId = null) {
   const state = randomUUID();
-  states.set(state, { createdAt: Date.now() });
+  states.set(state, { userId, createdAt: Date.now() });
   return state;
 }
 
 function consumeOAuthState(state) {
   const storedState = states.get(state);
   states.delete(state);
-  return Boolean(storedState);
+  return storedState || null;
 }
 
 function createGithubSession({ token, user }) {

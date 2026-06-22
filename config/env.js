@@ -8,6 +8,7 @@ module.exports = {
   jwtSecret: process.env.JWT_SECRET || "change-this-secret",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
   dependencyScannerUrl: process.env.DEPENDENCY_SCANNER_URL || "http://127.0.0.1:8001",
+  configScannerUrl: process.env.CONFIG_SCANNER_URL || "http://127.0.0.1:8002",
   frontendUrl: process.env.FRONTEND_URL || "http://127.0.0.1:3000",
   github: {
     clientId: process.env.GITHUB_CLIENT_ID,
@@ -19,6 +20,7 @@ module.exports = {
   uploadDir: path.resolve(rootDir, process.env.UPLOAD_DIR || "uploads"),
   dbEnabled: String(process.env.DB_ENABLED || "false").toLowerCase() === "true",
   databaseUrl: process.env.DATABASE_URL,
+  databaseSsl: String(process.env.DB_SSL || "true").toLowerCase() === "true",
   mail: {
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 587),

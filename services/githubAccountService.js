@@ -1,5 +1,7 @@
 const axios = require("axios");
+const jwt = require("jsonwebtoken");
 const env = require("../config/env");
+const { GithubAccount, ImportedRepository } = require("../models");
 const {
   createOAuthState,
   consumeOAuthState,
@@ -19,9 +21,9 @@ function requireOAuthConfig() {
   }
 }
 
-function buildAuthorizeUrl() {
+function buildAuthorizeUrl({ userId } = {}) {
   requireOAuthConfig();
-  const state = createOAuthState();
+  const state = createOAuthState(userId || null);
   const params = new URLSearchParams({
     client_id: env.github.clientId,
     redirect_uri: env.github.callbackUrl,
@@ -35,7 +37,8 @@ function buildAuthorizeUrl() {
 
 async function completeOAuth({ code, state }) {
   requireOAuthConfig();
-  if (!code || !state || !consumeOAuthState(state)) {
+  const storedState = state ? consumeOAuthState(state) : null;
+  if (!code || !storedState) {
     const error = new Error("Invalid GitHub OAuth callback state");
     error.statusCode = 400;
     throw error;
@@ -63,8 +66,12 @@ async function completeOAuth({ code, state }) {
 
   const token = tokenResponse.data.access_token;
   const user = await getViewer(token);
+  let githubAccount = null;
+  if (storedState.userId && GithubAccount) {
+    githubAccount = await upsertGithubAccount(storedState.userId, token, user);
+  }
   const sessionId = createGithubSession({ token, user });
-  return { sessionId, user };
+  return { sessionId, user, githubAccount };
 }
 
 function resolveSessionToken(sessionId) {
@@ -81,6 +88,16 @@ function getSessionUser(sessionId) {
   const session = getGithubSession(sessionId);
   if (!session) return null;
   return session.user;
+}
+
+function userIdFromAuthToken(authToken) {
+  if (!authToken) return null;
+  try {
+    const decoded = jwt.verify(authToken, env.jwtSecret);
+    return decoded.id;
+  } catch (_error) {
+    return null;
+  }
 }
 
 function githubHeaders(token) {
@@ -104,11 +121,44 @@ async function getViewer(token) {
   });
 
   return {
+    id: response.data.id,
     login: response.data.login,
     name: response.data.name,
     avatarUrl: response.data.avatar_url,
     profileUrl: response.data.html_url
   };
+}
+
+async function upsertGithubAccount(userId, token, githubUser) {
+  if (!GithubAccount) return null;
+  const [account] = await GithubAccount.upsert(
+    {
+      userId,
+      githubId: githubUser.id,
+      login: githubUser.login,
+      name: githubUser.name,
+      avatarUrl: githubUser.avatarUrl,
+      profileUrl: githubUser.profileUrl,
+      accessToken: token
+    },
+    { returning: true }
+  );
+  return account;
+}
+
+async function getStoredGithubAccount(userId) {
+  if (!GithubAccount || !userId) return null;
+  return GithubAccount.findOne({ where: { userId }, order: [["updatedAt", "DESC"]] });
+}
+
+async function disconnectGithubAccount(userId) {
+  if (!GithubAccount || !userId) return 0;
+  const accounts = await GithubAccount.findAll({ where: { userId } });
+  const accountIds = accounts.map((account) => account.id);
+  if (ImportedRepository && accountIds.length) {
+    await ImportedRepository.update({ githubAccountId: null }, { where: { userId, githubAccountId: accountIds } });
+  }
+  return GithubAccount.destroy({ where: { userId } });
 }
 
 async function listRepositories(token) {
@@ -137,11 +187,54 @@ async function listRepositories(token) {
   }));
 }
 
+async function importRepositoriesForUser(userId, token) {
+  const repositories = await listRepositories(token);
+  if (!ImportedRepository || !userId) {
+    return repositories;
+  }
+
+  const account = await getStoredGithubAccount(userId);
+  for (const repo of repositories) {
+    await ImportedRepository.upsert({
+      userId,
+      githubAccountId: account?.id || null,
+      githubRepoId: repo.id,
+      name: repo.name,
+      fullName: repo.fullName,
+      private: repo.private,
+      defaultBranch: repo.defaultBranch,
+      cloneUrl: repo.cloneUrl,
+      htmlUrl: repo.htmlUrl,
+      language: repo.language,
+      description: repo.description,
+      lastImportedAt: new Date()
+    });
+  }
+  return repositories;
+}
+
+async function listImportedRepositories(userId) {
+  if (!ImportedRepository || !userId) return [];
+  const repos = await ImportedRepository.findAll({ where: { userId }, order: [["lastImportedAt", "DESC"]] });
+  return repos.map((repo) => repo.toJSON());
+}
+
+async function deleteImportedRepository(userId, repositoryId) {
+  if (!ImportedRepository || !userId) return 0;
+  return ImportedRepository.destroy({ where: { id: repositoryId, userId } });
+}
+
 module.exports = {
   buildAuthorizeUrl,
   completeOAuth,
+  deleteImportedRepository,
+  disconnectGithubAccount,
   getSessionUser,
+  getStoredGithubAccount,
   getViewer,
+  importRepositoriesForUser,
+  listImportedRepositories,
   listRepositories,
-  resolveSessionToken
+  resolveSessionToken,
+  userIdFromAuthToken
 };
