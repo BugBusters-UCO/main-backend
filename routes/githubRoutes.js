@@ -4,6 +4,7 @@ const { requireAuth } = require("../middleware/authMiddleware");
 
 router.get("/oauth/start", githubController.startGithubOAuth);
 router.get("/oauth/callback", githubController.githubOAuthCallback);
+router.post("/webhook", githubController.handleGithubWebhook);
 router.post("/session", requireAuth, githubController.getGithubSession);
 router.post("/repositories", requireAuth, githubController.getGithubRepositories);
 router.get("/repositories", requireAuth, githubController.getImportedRepositories);

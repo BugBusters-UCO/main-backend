@@ -14,7 +14,15 @@ module.exports = {
     clientId: process.env.GITHUB_CLIENT_ID,
     clientSecret: process.env.GITHUB_CLIENT_SECRET,
     callbackUrl: process.env.GITHUB_CALLBACK_URL || "http://127.0.0.1:5000/api/github/oauth/callback",
-    scope: process.env.GITHUB_OAUTH_SCOPE || "repo read:user"
+    scope: process.env.GITHUB_OAUTH_SCOPE || "repo read:user admin:repo_hook",
+    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
+    webhookPublicUrl: process.env.GITHUB_WEBHOOK_PUBLIC_URL,
+    autoRegisterWebhooks: String(process.env.GITHUB_AUTO_REGISTER_WEBHOOKS || "true").toLowerCase() === "true",
+    autoScanOnPush: String(process.env.GITHUB_AUTO_SCAN_ON_PUSH || "true").toLowerCase() === "true",
+    autoScanTypes: String(process.env.GITHUB_AUTO_SCAN_TYPES || "dependency,config")
+      .split(",")
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean)
   },
   workspaceDir: path.resolve(rootDir, process.env.WORKSPACE_DIR || "workspace"),
   uploadDir: path.resolve(rootDir, process.env.UPLOAD_DIR || "uploads"),

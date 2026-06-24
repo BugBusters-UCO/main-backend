@@ -42,6 +42,23 @@ async function startZipConfigScan(req, res, next) {
   }
 }
 
+async function startImportedRepositoryConfigScan({ repository, githubToken, trigger = "manual", options = {} }) {
+  const job = await createJob(_newJob("github", repository.fullName || repository.cloneUrl, repository.userId, repository.id));
+  addLog(job.id, "info", `Automatic configuration scan trigger: ${trigger}`);
+  _runJob(job.id, {
+    sourceType: "github",
+    sourceLabel: repository.fullName,
+    repoUrl: repository.cloneUrl,
+    githubToken,
+    failOn: options.failOn || "high",
+    includeLow: options.includeLow ?? true
+  }).catch((error) => {
+    const safeMessage = sanitizeGitError(error.message);
+    addLog(job.id, "error", safeMessage);
+  });
+  return job;
+}
+
 async function getConfigScanJob(req, res) {
   const job = await getJob(req.params.jobId);
   if (!job || job.scannerType !== "config") {
@@ -223,6 +240,7 @@ function _topCategories(categories = {}) {
 
 module.exports = {
   startGithubConfigScan,
+  startImportedRepositoryConfigScan,
   startZipConfigScan,
   getConfigScanJob,
   getConfigScanJobs,

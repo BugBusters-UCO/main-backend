@@ -43,6 +43,24 @@ async function startZipScan(req, res, next) {
   }
 }
 
+async function startImportedRepositoryDependencyScan({ repository, githubToken, trigger = "manual", options = {} }) {
+  const job = await createJob(_newJob("github", repository.fullName || repository.cloneUrl, repository.userId, repository.id));
+  addLog(job.id, "info", `Automatic dependency scan trigger: ${trigger}`);
+  _runJob(job.id, {
+    sourceType: "github",
+    sourceLabel: repository.fullName,
+    repoUrl: repository.cloneUrl,
+    githubToken,
+    includeDev: options.includeDev ?? true,
+    useOsv: options.useOsv ?? true,
+    failOn: options.failOn || "high"
+  }).catch((error) => {
+    const safeMessage = sanitizeGitError(error.message);
+    addLog(job.id, "error", safeMessage);
+  });
+  return job;
+}
+
 async function getScanJob(req, res) {
   const job = await getJob(req.params.jobId);
   if (!job || (job.scannerType && job.scannerType !== "dependency")) {
@@ -222,6 +240,7 @@ function _manifestTypes(manifests = []) {
 
 module.exports = {
   startGithubScan,
+  startImportedRepositoryDependencyScan,
   startZipScan,
   getScanJob,
   getScanJobs,

@@ -11,6 +11,13 @@ const {
   resolveSessionToken,
   userIdFromAuthToken
 } = require("../services/githubAccountService");
+const {
+  findImportedRepositoriesForPush,
+  parseWebhookBody,
+  shouldProcessDelivery,
+  startScansForPush,
+  verifyGithubSignature
+} = require("../services/githubWebhookService");
 
 function sessionFromRequest(req) {
   return req.headers["x-github-session"] || req.body?.githubSession;
@@ -118,12 +125,58 @@ async function disconnectGithub(req, res, next) {
   }
 }
 
+async function handleGithubWebhook(req, res, next) {
+  try {
+    const event = req.headers["x-github-event"];
+    const deliveryId = req.headers["x-github-delivery"];
+    const verification = verifyGithubSignature(req);
+
+    if (!shouldProcessDelivery(deliveryId)) {
+      return res.status(202).json({ accepted: true, duplicate: true, message: "GitHub delivery already processed" });
+    }
+
+    if (event === "ping") {
+      return res.json({ accepted: true, event, verified: verification.verified, message: "Webhook connected" });
+    }
+    if (event !== "push") {
+      return res.status(202).json({ accepted: true, event, skipped: true, message: "Only push events start scans" });
+    }
+    if (!env.github.autoScanOnPush) {
+      return res.status(202).json({ accepted: true, event, skipped: true, message: "Auto scan on push is disabled" });
+    }
+
+    const payload = parseWebhookBody(req);
+    const repositories = await findImportedRepositoriesForPush(payload);
+    if (!repositories.length) {
+      return res.status(202).json({
+        accepted: true,
+        event,
+        skipped: true,
+        repository: payload.repository?.full_name,
+        message: "Repository is not imported by any user"
+      });
+    }
+
+    const started = await startScansForPush({ repositories, payload, verified: verification.verified });
+    res.status(202).json({
+      accepted: true,
+      event,
+      repository: payload.repository?.full_name,
+      after: payload.after,
+      ...started
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   deleteRepository,
   disconnectGithub,
   getGithubRepositories,
   getImportedRepositories,
   getGithubSession,
+  handleGithubWebhook,
   githubOAuthCallback,
   startGithubOAuth
 };

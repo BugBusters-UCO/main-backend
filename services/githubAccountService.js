@@ -209,8 +209,49 @@ async function importRepositoriesForUser(userId, token) {
       description: repo.description,
       lastImportedAt: new Date()
     });
+
+    if (env.github.autoRegisterWebhooks && env.github.webhookPublicUrl) {
+      ensureRepositoryWebhook(token, repo.fullName).catch((error) => {
+        const status = error.response?.status;
+        const reason = status === 403 || status === 404 ? "missing repository admin permission" : error.message;
+        console.warn(`Could not register GitHub webhook for ${repo.fullName}: ${reason}`);
+      });
+    }
   }
   return repositories;
+}
+
+async function ensureRepositoryWebhook(token, repoFullName) {
+  if (!env.github.webhookPublicUrl) return null;
+  const hooksUrl = `${GITHUB_API}/repos/${repoFullName}/hooks`;
+  const hooksResponse = await axios.get(hooksUrl, {
+    headers: githubHeaders(token),
+    params: { per_page: 100 },
+    timeout: 15000
+  });
+
+  const existing = hooksResponse.data.find((hook) => hook.config?.url === env.github.webhookPublicUrl);
+  if (existing) return existing;
+
+  const response = await axios.post(
+    hooksUrl,
+    {
+      name: "web",
+      active: true,
+      events: ["push"],
+      config: {
+        url: env.github.webhookPublicUrl,
+        content_type: "json",
+        secret: env.github.webhookSecret || undefined,
+        insecure_ssl: "0"
+      }
+    },
+    {
+      headers: githubHeaders(token),
+      timeout: 15000
+    }
+  );
+  return response.data;
 }
 
 async function listImportedRepositories(userId) {
@@ -232,6 +273,7 @@ module.exports = {
   getSessionUser,
   getStoredGithubAccount,
   getViewer,
+  ensureRepositoryWebhook,
   importRepositoriesForUser,
   listImportedRepositories,
   listRepositories,
