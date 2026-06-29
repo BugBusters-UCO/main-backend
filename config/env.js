@@ -9,6 +9,8 @@ module.exports = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
   dependencyScannerUrl: process.env.DEPENDENCY_SCANNER_URL || "http://127.0.0.1:8001",
   configScannerUrl: process.env.CONFIG_SCANNER_URL || "http://127.0.0.1:8002",
+  secretScannerUrl: process.env.SECRET_SCANNER_URL || "http://127.0.0.1:8003",
+  cipherScannerUrl: process.env.CIPHER_SCANNER_URL || "http://127.0.0.1:8004",
   frontendUrl: process.env.FRONTEND_URL || "http://127.0.0.1:3000",
   github: {
     clientId: process.env.GITHUB_CLIENT_ID,

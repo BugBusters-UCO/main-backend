@@ -44,10 +44,24 @@ async function connectDatabase() {
     throw new Error("Install sequelize, pg, and pg-hstore and set DATABASE_URL before enabling DB_ENABLED=true");
   }
   await sequelize.authenticate();
+  await ensureScanJobScannerTypeEnum();
   require("../models");
   await sequelize.sync();
   console.log("PostgreSQL connected through Sequelize.");
   return sequelize;
+}
+
+async function ensureScanJobScannerTypeEnum() {
+  if (!sequelize) return;
+  await sequelize.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_scan_jobs_scannerType') THEN
+        ALTER TYPE "enum_scan_jobs_scannerType" ADD VALUE IF NOT EXISTS 'secret';
+        ALTER TYPE "enum_scan_jobs_scannerType" ADD VALUE IF NOT EXISTS 'cipher';
+      END IF;
+    END $$;
+  `);
 }
 
 module.exports = { sequelize, connectDatabase, loadSequelize };

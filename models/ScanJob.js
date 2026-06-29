@@ -21,7 +21,7 @@ if (sequelize) {
         allowNull: true
       },
       scannerType: {
-        type: DataTypes.ENUM("dependency", "config"),
+        type: DataTypes.ENUM("dependency", "config", "secret", "cipher"),
         defaultValue: "dependency"
       },
       sourceType: {
