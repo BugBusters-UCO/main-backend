@@ -29,7 +29,7 @@ function createSequelizeInstance() {
           }
         }
       : {},
-    logging: env.nodeEnv === "development" ? console.log : false
+    logging: false,
   });
 }
 

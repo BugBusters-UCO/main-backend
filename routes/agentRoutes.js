@@ -12,6 +12,9 @@ router.post("/:agentId/scans/:scanId/result", requireAgentToken, agentController
 
 router.use(requireAuth);
 
+router.post("/connect", agentController.connectAgent);
+router.post("/disconnect", agentController.disconnectAgent);
+
 router.get("/", agentController.getAgents);
 router.get("/scan-reports", agentController.getAgentScanReports);
 router.get("/:agentId/inventory", agentController.getAgentInventory);

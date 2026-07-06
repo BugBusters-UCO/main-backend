@@ -18,7 +18,7 @@ function addLog(jobId, level, message, meta = {}) {
   logsByJob.set(jobId, logs.slice(-1000));
   emitter.emit(jobId, entry);
   const metaText = Object.keys(meta || {}).length ? ` ${JSON.stringify(meta)}` : "";
-  console.log(`[${jobId}] ${level.toUpperCase()} ${message}${metaText}`);
+  // console.log(`[${jobId}] ${level.toUpperCase()} ${message}${metaText}`);
   return entry;
 }
 

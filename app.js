@@ -15,7 +15,7 @@ app.use(
   })
 );
 app.use(cors({ origin: process.env.CLIENT_ORIGIN || true, credentials: true }));
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(
   rateLimit({

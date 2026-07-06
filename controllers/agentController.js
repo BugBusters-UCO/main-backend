@@ -13,6 +13,7 @@ const {
   updateAgentScanStatus
 } = require("../services/agentService");
 const { getLogs, subscribe } = require("../services/logStreamService");
+const { spawnAgent, killAgent } = require("../services/spawnService");
 
 async function registerVmAgent(req, res, next) {
   try {
@@ -141,26 +142,50 @@ async function stopAgentScanJob(req, res, next) {
   }
 }
 
-async function streamAgentScanLogs(req, res) {
-  const job = await getAgentScan(req.user.id, req.params.scanId);
-  if (!job) {
-    return res.status(404).json({ message: "Agent scan not found" });
+async function streamAgentScanLogs(req, res, next) {
+  try {
+    const { scanId } = req.params;
+    const job = await getAgentScan(req.user.id, scanId);
+    if (!job) {
+      return res.status(404).json({ message: "Agent scan not found" });
+    }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+
+    const previousLogs = getLogs(scanId);
+    for (const entry of previousLogs) {
+      res.write(`data: ${JSON.stringify(entry)}\n\n`);
+    }
+
+    const unsubscribe = subscribe(scanId, (entry) => {
+      res.write(`data: ${JSON.stringify(entry)}\n\n`);
+    });
+
+    req.on("close", unsubscribe);
+  } catch (error) {
+    next(error);
   }
+}
 
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders?.();
-
-  for (const entry of getLogs(job.id)) {
-    res.write(`data: ${JSON.stringify(entry)}\n\n`);
+async function connectAgent(req, res, next) {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ error: "Token is required." });
+    res.json(spawnAgent(token, req.user?.email || "auto@bugbusters.local"));
+  } catch (error) {
+    next(error);
   }
+}
 
-  const unsubscribe = subscribe(job.id, (entry) => {
-    res.write(`data: ${JSON.stringify(entry)}\n\n`);
-  });
-
-  req.on("close", unsubscribe);
+async function disconnectAgent(req, res, next) {
+  try {
+    res.json(killAgent());
+  } catch (error) {
+    next(error);
+  }
 }
 
 module.exports = {
@@ -177,5 +202,7 @@ module.exports = {
   createAgentScan,
   getAgentScanJob,
   stopAgentScanJob,
-  streamAgentScanLogs
+  streamAgentScanLogs,
+  connectAgent,
+  disconnectAgent
 };

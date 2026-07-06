@@ -353,6 +353,16 @@ function _plain(row) {
   for (const key of ["createdAt", "updatedAt", "lastSeenAt", "startedAt", "completedAt"]) {
     if (plain[key] instanceof Date) plain[key] = plain[key].toISOString();
   }
+  
+  // Dynamically set offline status if heartbeat missed
+  // Increased to 10 minutes (600000) to account for long synchronous scans blocking heartbeats
+  if (plain.lastSeenAt && plain.status === "online") {
+    const lastSeen = new Date(plain.lastSeenAt).getTime();
+    if (Date.now() - lastSeen > 600000) {
+      plain.status = "offline";
+    }
+  }
+  
   return plain;
 }
 
