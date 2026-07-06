@@ -12,6 +12,7 @@ module.exports = {
   configScannerUrl: process.env.CONFIG_SCANNER_URL || "http://127.0.0.1:8002",
   secretScannerUrl: process.env.SECRET_SCANNER_URL || "http://127.0.0.1:8003",
   cipherScannerUrl: process.env.CIPHER_SCANNER_URL || "http://127.0.0.1:8004",
+  riskEngineUrl: process.env.RISK_ENGINE_URL || "http://127.0.0.1:8005",
   frontendUrl: process.env.FRONTEND_URL || "http://127.0.0.1:3000",
   github: {
     clientId: process.env.GITHUB_CLIENT_ID,

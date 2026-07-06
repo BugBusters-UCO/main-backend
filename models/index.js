@@ -4,6 +4,8 @@ const GithubAccount = require("./GithubAccount");
 const ImportedRepository = require("./ImportedRepository");
 const Agent = require("./Agent");
 const AgentScanJob = require("./AgentScanJob");
+const RiskAssessment = require("./RiskAssessment");
+const ScheduledScan = require("./ScheduledScan");
 
 function applyAssociations() {
   if (!User || !ScanJob || !GithubAccount || !ImportedRepository) return;
@@ -29,6 +31,18 @@ function applyAssociations() {
     Agent.hasMany(AgentScanJob, { foreignKey: "agentId", as: "scanJobs" });
     AgentScanJob.belongsTo(Agent, { foreignKey: "agentId", as: "agent" });
   }
+
+  if (RiskAssessment) {
+    User.hasMany(RiskAssessment, { foreignKey: "userId", as: "riskAssessments" });
+    RiskAssessment.belongsTo(User, { foreignKey: "userId", as: "user" });
+  }
+
+  if (ScheduledScan) {
+    User.hasMany(ScheduledScan, { foreignKey: "userId", as: "scheduledScans" });
+    ScheduledScan.belongsTo(User, { foreignKey: "userId", as: "user" });
+    ImportedRepository.hasMany(ScheduledScan, { foreignKey: "importedRepositoryId", as: "scheduledScans" });
+    ScheduledScan.belongsTo(ImportedRepository, { foreignKey: "importedRepositoryId", as: "repository" });
+  }
 }
 
 applyAssociations();
@@ -40,5 +54,7 @@ module.exports = {
   ImportedRepository,
   Agent,
   AgentScanJob,
+  RiskAssessment,
+  ScheduledScan,
   applyAssociations
 };

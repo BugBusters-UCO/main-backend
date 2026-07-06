@@ -2,12 +2,14 @@ const { checkScannerHealth } = require("../services/dependencyScannerService");
 const { checkConfigScannerHealth } = require("../services/configScannerService");
 const { checkSecretScannerHealth } = require("../services/secretScannerService");
 const { checkCipherScannerHealth } = require("../services/cipherScannerService");
+const { checkRiskEngineHealth } = require("../services/riskEngineService");
 
 async function health(_req, res) {
   let dependencyScanner = { status: "unreachable" };
   let configScanner = { status: "unreachable" };
   let secretScanner = { status: "unreachable" };
   let cipherScanner = { status: "unreachable" };
+  let riskEngine = { status: "unreachable" };
 
   try {
     dependencyScanner = await checkScannerHealth();
@@ -45,13 +47,23 @@ async function health(_req, res) {
     };
   }
 
+  try {
+    riskEngine = await checkRiskEngineHealth();
+  } catch (error) {
+    riskEngine = {
+      status: "unreachable",
+      message: error.message
+    };
+  }
+
   res.json({
     status: "ok",
     service: "main-backend",
     dependencyScanner,
     configScanner,
     secretScanner,
-    cipherScanner
+    cipherScanner,
+    riskEngine
   });
 }
 
