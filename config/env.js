@@ -7,6 +7,7 @@ module.exports = {
   port: Number(process.env.PORT || 5000),
   jwtSecret: process.env.JWT_SECRET || "change-this-secret",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
+  agentToken: process.env.AGENT_SHARED_TOKEN || "dev-agent-token",
   dependencyScannerUrl: process.env.DEPENDENCY_SCANNER_URL || "http://127.0.0.1:8001",
   configScannerUrl: process.env.CONFIG_SCANNER_URL || "http://127.0.0.1:8002",
   secretScannerUrl: process.env.SECRET_SCANNER_URL || "http://127.0.0.1:8003",
