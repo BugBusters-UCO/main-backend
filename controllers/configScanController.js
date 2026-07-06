@@ -3,6 +3,7 @@ const fs = require("fs");
 
 const { createJob, getJob, listJobs, updateJob } = require("../services/scanJobStore");
 const { addLog, getLogs, subscribe } = require("../services/logStreamService");
+const { listAgentScans, getAgentScan, adaptAgentScanToModule } = require("../services/agentService");
 const { cloneRepository, sanitizeGitError } = require("../services/githubService");
 const { getStoredGithubAccount, resolveSessionToken } = require("../services/githubAccountService");
 const { extractZip } = require("../services/zipService");
@@ -43,7 +44,15 @@ async function startZipConfigScan(req, res, next) {
 }
 
 async function getConfigScanJob(req, res) {
-  const job = await getJob(req.params.jobId);
+  let job = await getJob(req.params.jobId);
+  
+  if (!job) {
+    const agentJob = await getAgentScan(req.user.id, req.params.jobId);
+    if (agentJob) {
+      job = adaptAgentScanToModule(agentJob, "config");
+    }
+  }
+
   if (!job || job.scannerType !== "config") {
     return res.status(404).json({ message: "Configuration scan job not found" });
   }
@@ -54,7 +63,15 @@ async function getConfigScanJob(req, res) {
 }
 
 async function getConfigScanJobs(req, res) {
-  res.json(await listJobs({ userId: req.user.id, scannerType: "config" }));
+  const cloudJobs = await listJobs({ userId: req.user.id, scannerType: "config" });
+  const agentJobs = await listAgentScans(req.user.id);
+  
+  const adaptedAgentJobs = agentJobs
+    .map(job => adaptAgentScanToModule(job, "config"))
+    .filter(Boolean);
+
+  const allJobs = [...cloudJobs, ...adaptedAgentJobs].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  res.json(allJobs);
 }
 
 async function streamConfigScanLogs(req, res) {

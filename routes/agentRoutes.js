@@ -9,6 +9,7 @@ router.get("/:agentId/commands", requireAgentToken, agentController.pollAgentCom
 router.post("/:agentId/scans/:scanId/logs", requireAgentToken, agentController.postAgentLog);
 router.post("/:agentId/scans/:scanId/status", requireAgentToken, agentController.postAgentScanStatus);
 router.post("/:agentId/scans/:scanId/result", requireAgentToken, agentController.postAgentScanResult);
+router.post("/:agentId/browse-result/:requestId", requireAgentToken, agentController.postAgentBrowseResult);
 
 router.use(requireAuth);
 
@@ -23,5 +24,7 @@ router.post("/:agentId/scans", agentController.createAgentScan);
 router.get("/scans/:scanId", agentController.getAgentScanJob);
 router.post("/scans/:scanId/stop", agentController.stopAgentScanJob);
 router.get("/scans/:scanId/logs", agentController.streamAgentScanLogs);
+router.post("/:agentId/browse", agentController.requestAgentBrowse);
+router.get("/:agentId/browse/:requestId", agentController.pollAgentBrowse);
 
 module.exports = router;

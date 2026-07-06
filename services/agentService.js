@@ -4,6 +4,7 @@ const { addLog } = require("./logStreamService");
 
 const memoryAgents = new Map();
 const memoryJobs = new Map();
+const memoryInteractiveCommands = new Map(); // Store browse requests: requestId -> command data
 
 async function listAgents(userId) {
   await cleanupDemoAgents(userId);
@@ -142,6 +143,16 @@ async function getAgentCommands(agentId) {
   const agent = await getAgentById(agentId);
   if (!agent) return null;
   await heartbeatAgent(agentId, { status: "online" });
+
+  // 1. Check for pending interactive commands (e.g. browse)
+  for (const cmd of memoryInteractiveCommands.values()) {
+    if (cmd.agentId === agentId && cmd.status === "pending") {
+      cmd.status = "sent";
+      return { agentId, command: { type: cmd.type, requestId: cmd.requestId, path: cmd.path } };
+    }
+  }
+
+  // 2. Check for scan commands
   const jobs = await listAgentScans(agent.userId, { agentId, limit: 20 });
   const job = jobs.find((item) => ["queued", "stopping"].includes(item.status));
   if (!job) return { agentId, command: null };
@@ -322,7 +333,35 @@ function _normalizeInventory(inventory = {}) {
 }
 
 function _isDemoAgent(agent) {
-  return agent.version === "agent-not-installed-demo" || agent.hostname === "payment-vm-01.bank.local";
+  return agent.version === "agent-not-installed-demo" || agent.hostname === "payment-vm-01.bank.local" || String(agent.userId).startsWith("demo-");
+}
+
+function adaptAgentScanToModule(agentJob, module) {
+  if (!agentJob || !agentJob.command || !agentJob.command.modules || !agentJob.command.modules.includes(module)) return null;
+  
+  let result = null;
+  let status = agentJob.status;
+  if (agentJob.result && Array.isArray(agentJob.result.reports)) {
+    const report = agentJob.result.reports.find(r => r.module === module);
+    if (report) {
+       result = report.result || null;
+       status = report.status === "completed" ? "completed" : report.status === "failed" ? "failed" : status;
+    }
+  }
+
+  return {
+    id: agentJob.id,
+    userId: agentJob.userId,
+    scannerType: module,
+    sourceType: "vm-agent",
+    sourceLabel: agentJob.command.paths ? agentJob.command.paths[0] : "VM Agent Scan",
+    status: status,
+    result: result,
+    error: agentJob.error,
+    createdAt: agentJob.createdAt,
+    completedAt: agentJob.completedAt,
+    isVmAgent: true,
+  };
 }
 
 function _isDemoJob(job) {
@@ -366,6 +405,72 @@ function _plain(row) {
   return plain;
 }
 
+function adaptAgentScanToModule(agentJob, module) {
+  if (!agentJob || !agentJob.command || !agentJob.command.modules || !agentJob.command.modules.includes(module)) return null;
+  
+  let result = null;
+  let status = agentJob.status;
+  if (agentJob.result && Array.isArray(agentJob.result.reports)) {
+    const report = agentJob.result.reports.find(r => r.module === module);
+    if (report) {
+       result = report.result || null;
+       status = report.status === "completed" ? "completed" : report.status === "failed" ? "failed" : status;
+    }
+  }
+
+  return {
+    id: agentJob.id,
+    userId: agentJob.userId,
+    scannerType: module,
+    sourceType: "vm-agent",
+    sourceLabel: agentJob.command.paths ? agentJob.command.paths[0] : "VM Agent Scan",
+    status: status,
+    result: result,
+    error: agentJob.error,
+    createdAt: agentJob.createdAt,
+    completedAt: agentJob.completedAt,
+    isVmAgent: true,
+  };
+}
+
+async function queueAgentBrowseCommand(userId, agentId, path) {
+  const agent = await getAgent(userId, agentId);
+  if (!agent) return null;
+
+  const requestId = randomUUID();
+  const command = {
+    requestId,
+    agentId,
+    type: "browse",
+    path,
+    status: "pending",
+    result: null,
+    createdAt: new Date().toISOString()
+  };
+  memoryInteractiveCommands.set(requestId, command);
+  return { requestId };
+}
+
+async function submitAgentBrowseResult(agentId, requestId, result) {
+  const command = memoryInteractiveCommands.get(requestId);
+  if (!command || command.agentId !== agentId) return null;
+
+  command.status = "completed";
+  command.result = result;
+  command.completedAt = new Date().toISOString();
+  return command;
+}
+
+async function getAgentBrowseResult(userId, agentId, requestId) {
+  const command = memoryInteractiveCommands.get(requestId);
+  if (!command || command.agentId !== agentId) return null;
+  
+  if (command.status === "completed") {
+    return { pending: false, result: command.result };
+  }
+  return { pending: true };
+}
+
 module.exports = {
   listAgents,
   getAgent,
@@ -381,5 +486,8 @@ module.exports = {
   completeAgentScan,
   listAgentScans,
   getAgentScan,
-  updateAgentScan
+  adaptAgentScanToModule,
+  queueAgentBrowseCommand,
+  submitAgentBrowseResult,
+  getAgentBrowseResult,
 };

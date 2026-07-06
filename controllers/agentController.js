@@ -10,7 +10,10 @@ const {
   registerAgent,
   startAgentScan,
   stopAgentScan,
-  updateAgentScanStatus
+  updateAgentScanStatus,
+  queueAgentBrowseCommand,
+  submitAgentBrowseResult,
+  getAgentBrowseResult
 } = require("../services/agentService");
 const { getLogs, subscribe } = require("../services/logStreamService");
 const { spawnAgent, killAgent } = require("../services/spawnService");
@@ -188,6 +191,38 @@ async function disconnectAgent(req, res, next) {
   }
 }
 
+async function requestAgentBrowse(req, res, next) {
+  try {
+    const { path } = req.body;
+    if (!path) return res.status(400).json({ error: "Path is required" });
+    const response = await queueAgentBrowseCommand(req.user.id, req.params.agentId, path);
+    if (!response) return res.status(404).json({ message: "Agent not found" });
+    res.json(response);
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function pollAgentBrowse(req, res, next) {
+  try {
+    const response = await getAgentBrowseResult(req.user.id, req.params.agentId, req.params.requestId);
+    if (!response) return res.status(404).json({ message: "Agent or request not found" });
+    res.json(response);
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function postAgentBrowseResult(req, res, next) {
+  try {
+    const response = await submitAgentBrowseResult(req.params.agentId, req.params.requestId, req.body.result);
+    if (!response) return res.status(404).json({ message: "Agent or request not found" });
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   registerVmAgent,
   heartbeatVmAgent,
@@ -204,5 +239,8 @@ module.exports = {
   stopAgentScanJob,
   streamAgentScanLogs,
   connectAgent,
-  disconnectAgent
+  disconnectAgent,
+  requestAgentBrowse,
+  pollAgentBrowse,
+  postAgentBrowseResult
 };

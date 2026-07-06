@@ -3,6 +3,7 @@ const fs = require("fs");
 
 const { createJob, getJob, listJobs, updateJob } = require("../services/scanJobStore");
 const { addLog, getLogs, subscribe } = require("../services/logStreamService");
+const { listAgentScans, getAgentScan, adaptAgentScanToModule } = require("../services/agentService");
 const { cloneRepository, sanitizeGitError } = require("../services/githubService");
 const { getStoredGithubAccount, resolveSessionToken } = require("../services/githubAccountService");
 const { extractZip } = require("../services/zipService");
@@ -44,7 +45,15 @@ async function startZipCipherScan(req, res, next) {
 }
 
 async function getCipherScanJob(req, res) {
-  const job = await getJob(req.params.jobId);
+  let job = await getJob(req.params.jobId);
+  
+  if (!job) {
+    const agentJob = await getAgentScan(req.user.id, req.params.jobId);
+    if (agentJob) {
+      job = adaptAgentScanToModule(agentJob, "cipher");
+    }
+  }
+
   if (!job || job.scannerType !== "cipher") {
     return res.status(404).json({ message: "Cipher scan job not found" });
   }
@@ -55,7 +64,15 @@ async function getCipherScanJob(req, res) {
 }
 
 async function getCipherScanJobs(req, res) {
-  res.json(await listJobs({ userId: req.user.id, scannerType: "cipher" }));
+  const cloudJobs = await listJobs({ userId: req.user.id, scannerType: "cipher" });
+  const agentJobs = await listAgentScans(req.user.id);
+  
+  const adaptedAgentJobs = agentJobs
+    .map(job => adaptAgentScanToModule(job, "cipher"))
+    .filter(Boolean);
+
+  const allJobs = [...cloudJobs, ...adaptedAgentJobs].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  res.json(allJobs);
 }
 
 async function streamCipherScanLogs(req, res) {
