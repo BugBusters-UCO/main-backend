@@ -1,4 +1,4 @@
-const { ScanJob, ScheduledScan, Agent, GithubAccount } = require("../models");
+const { ScanJob, ScheduledScan, Agent, GithubAccount, AgentScanJob } = require("../models");
 const { userIdFromAuthToken } = require("../services/githubAccountService");
 
 async function getDashboardStats(req, res, next) {
@@ -8,13 +8,19 @@ async function getDashboardStats(req, res, next) {
 
     const whereClause = userId ? { userId } : {};
 
-    // Get all scan jobs
+    // Get all cloud scan jobs
     const scans = await ScanJob.findAll({
       where: whereClause,
-      attributes: ["status", "scannerType", "result", "createdAt", "sourceLabel"]
+      attributes: ["id", "status", "scannerType", "result", "createdAt", "sourceLabel"]
     });
 
-    let totalScans = scans.length;
+    // Get all agent scan jobs
+    const agentScans = await AgentScanJob.findAll({
+      where: whereClause,
+      attributes: ["id", "status", "modules", "result", "createdAt", "sourceLabel"]
+    });
+
+    let totalScans = scans.length + agentScans.length;
     let successfulScans = 0;
     let failedScans = 0;
     let totalFindings = 0;
@@ -34,6 +40,25 @@ async function getDashboardStats(req, res, next) {
       cipher: { scans: 0, findings: 0, critical: 0, high: 0, medium: 0, low: 0 }
     };
 
+    const aggregateSeverities = (items, type) => {
+      items.forEach(item => {
+        totalFindings++;
+        if (scannerDetails[type]) scannerDetails[type].findings++;
+        const sev = (item.severity || 'low').toLowerCase();
+        if (sev === 'critical') {
+          criticalFindings++;
+          if (scannerDetails[type]) scannerDetails[type].critical++;
+        } else if (sev === 'high') {
+          if (scannerDetails[type]) scannerDetails[type].high++;
+        } else if (sev === 'medium' || sev === 'moderate') {
+          if (scannerDetails[type]) scannerDetails[type].medium++;
+        } else {
+          if (scannerDetails[type]) scannerDetails[type].low++;
+        }
+      });
+    };
+
+    // Process Cloud Scans
     scans.forEach((scan) => {
       if (scan.status === "completed") {
         successfulScans++;
@@ -46,24 +71,6 @@ async function getDashboardStats(req, res, next) {
         scannerDetails[scan.scannerType].scans++;
       }
 
-      const aggregateSeverities = (items, type) => {
-        items.forEach(item => {
-          totalFindings++;
-          scannerDetails[type].findings++;
-          const sev = (item.severity || 'low').toLowerCase();
-          if (sev === 'critical') {
-            criticalFindings++;
-            scannerDetails[type].critical++;
-          } else if (sev === 'high') {
-            scannerDetails[type].high++;
-          } else if (sev === 'medium' || sev === 'moderate') {
-            scannerDetails[type].medium++;
-          } else {
-            scannerDetails[type].low++;
-          }
-        });
-      };
-
       if (scan.result) {
         if (scan.scannerType === "dependency" && Array.isArray(scan.result.vulnerabilities)) {
           aggregateSeverities(scan.result.vulnerabilities, "dependency");
@@ -74,6 +81,40 @@ async function getDashboardStats(req, res, next) {
         } else if (scan.scannerType === "cipher" && Array.isArray(scan.result.weaknesses)) {
           aggregateSeverities(scan.result.weaknesses, "cipher");
         }
+      }
+    });
+
+    // Process Agent Scans
+    agentScans.forEach((agentScan) => {
+      if (agentScan.status === "completed") {
+        successfulScans++;
+      } else if (agentScan.status === "failed") {
+        failedScans++;
+      }
+
+      const modules = agentScan.modules || [];
+      modules.forEach(mod => {
+        if (scanCounts[mod] !== undefined) {
+          scanCounts[mod]++;
+          scannerDetails[mod].scans++;
+        }
+      });
+
+      if (agentScan.result && Array.isArray(agentScan.result.reports)) {
+        agentScan.result.reports.forEach(report => {
+          const mod = report.module;
+          if (report.result) {
+            if (mod === "dependency" && Array.isArray(report.result.vulnerabilities)) {
+              aggregateSeverities(report.result.vulnerabilities, "dependency");
+            } else if (mod === "config" && Array.isArray(report.result.misconfigurations)) {
+              aggregateSeverities(report.result.misconfigurations, "config");
+            } else if (mod === "secret" && Array.isArray(report.result.secrets)) {
+              aggregateSeverities(report.result.secrets, "secret");
+            } else if (mod === "cipher" && Array.isArray(report.result.weaknesses)) {
+              aggregateSeverities(report.result.weaknesses, "cipher");
+            }
+          }
+        });
       }
     });
 
@@ -95,12 +136,18 @@ async function getDashboardStats(req, res, next) {
     }
 
     // Recent Scans
-    const recentScans = await ScanJob.findAll({
-      where: whereClause,
-      attributes: ["id", "sourceLabel", "scannerType", "status", "createdAt"],
-      order: [["createdAt", "DESC"]],
-      limit: 5
-    });
+    let recentScansRaw = [
+      ...scans.map(s => ({
+        id: s.id, sourceLabel: s.sourceLabel, scannerType: s.scannerType, status: s.status, createdAt: s.createdAt
+      })),
+      ...agentScans.map(s => ({
+        id: s.id, sourceLabel: s.sourceLabel, scannerType: `agent (${(s.modules || []).join(", ")})`, status: s.status, createdAt: s.createdAt
+      }))
+    ];
+    
+    const recentScans = recentScansRaw
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .slice(0, 5);
 
     // Riskiest Assets
     const assetRisks = {};
@@ -113,41 +160,52 @@ async function getDashboardStats(req, res, next) {
         trendMap[d.toISOString().split('T')[0]] = 0;
     }
 
-    scans.forEach(scan => {
+    const processTrendAndRisks = (sourceLabel, createdAt, items) => {
       // Riskiest Assets logic
-      if (scan.sourceLabel) {
-        if (!assetRisks[scan.sourceLabel]) {
-            assetRisks[scan.sourceLabel] = { critical: 0, high: 0 };
+      if (sourceLabel) {
+        if (!assetRisks[sourceLabel]) {
+            assetRisks[sourceLabel] = { critical: 0, high: 0 };
         }
-        if (scan.result) {
-            let items = [];
-            if (scan.scannerType === "dependency") items = scan.result.vulnerabilities || [];
-            if (scan.scannerType === "config") items = scan.result.misconfigurations || [];
-            if (scan.scannerType === "secret") items = scan.result.secrets || [];
-            if (scan.scannerType === "cipher") items = scan.result.weaknesses || [];
-            
-            items.forEach(item => {
-                const sev = (item.severity || 'low').toLowerCase();
-                if (sev === 'critical') assetRisks[scan.sourceLabel].critical++;
-                else if (sev === 'high') assetRisks[scan.sourceLabel].high++;
-            });
-        }
+        items.forEach(item => {
+            const sev = (item.severity || 'low').toLowerCase();
+            if (sev === 'critical') assetRisks[sourceLabel].critical++;
+            else if (sev === 'high') assetRisks[sourceLabel].high++;
+        });
       }
 
       // Trend logic
-      if (scan.createdAt) {
-        const dateStr = new Date(scan.createdAt).toISOString().split('T')[0];
+      if (createdAt) {
+        const dateStr = new Date(createdAt).toISOString().split('T')[0];
         if (trendMap[dateStr] !== undefined) {
-            let scanFindings = 0;
-            if (scan.result) {
-                if (scan.scannerType === "dependency") scanFindings = (scan.result.vulnerabilities || []).length;
-                if (scan.scannerType === "config") scanFindings = (scan.result.misconfigurations || []).length;
-                if (scan.scannerType === "secret") scanFindings = (scan.result.secrets || []).length;
-                if (scan.scannerType === "cipher") scanFindings = (scan.result.weaknesses || []).length;
-            }
-            trendMap[dateStr] += scanFindings;
+            trendMap[dateStr] += items.length;
         }
       }
+    };
+
+    scans.forEach(scan => {
+      let items = [];
+      if (scan.result) {
+          if (scan.scannerType === "dependency") items = scan.result.vulnerabilities || [];
+          if (scan.scannerType === "config") items = scan.result.misconfigurations || [];
+          if (scan.scannerType === "secret") items = scan.result.secrets || [];
+          if (scan.scannerType === "cipher") items = scan.result.weaknesses || [];
+      }
+      processTrendAndRisks(scan.sourceLabel, scan.createdAt, items);
+    });
+
+    agentScans.forEach(agentScan => {
+      let items = [];
+      if (agentScan.result && Array.isArray(agentScan.result.reports)) {
+        agentScan.result.reports.forEach(report => {
+          if (report.result) {
+            if (report.module === "dependency" && report.result.vulnerabilities) items = items.concat(report.result.vulnerabilities);
+            if (report.module === "config" && report.result.misconfigurations) items = items.concat(report.result.misconfigurations);
+            if (report.module === "secret" && report.result.secrets) items = items.concat(report.result.secrets);
+            if (report.module === "cipher" && report.result.weaknesses) items = items.concat(report.result.weaknesses);
+          }
+        });
+      }
+      processTrendAndRisks(agentScan.sourceLabel, agentScan.createdAt, items);
     });
 
     const riskiestAssets = Object.entries(assetRisks)
