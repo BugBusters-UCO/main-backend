@@ -18,7 +18,20 @@ if (sequelize) {
       },
       importedRepositoryId: {
         type: DataTypes.UUID,
-        allowNull: false
+        allowNull: true
+      },
+      agentId: {
+        type: DataTypes.UUID,
+        allowNull: true
+      },
+      selectedPaths: {
+        type: DataTypes.JSONB,
+        allowNull: false,
+        defaultValue: []
+      },
+      scope: {
+        type: DataTypes.STRING,
+        allowNull: true
       },
       name: {
         type: DataTypes.STRING,

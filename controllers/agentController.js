@@ -185,6 +185,13 @@ async function connectAgent(req, res, next) {
 
 async function disconnectAgent(req, res, next) {
   try {
+    const { listAgents, heartbeatAgent } = require("../services/agentService");
+    const agents = await listAgents(req.user.id);
+    for (const a of agents) {
+      if (a.status === 'online' && !a.hostname.includes("demo")) {
+        await heartbeatAgent(a.id, { status: 'offline' });
+      }
+    }
     res.json(killAgent());
   } catch (error) {
     next(error);

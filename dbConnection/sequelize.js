@@ -45,10 +45,27 @@ async function connectDatabase() {
   }
   await sequelize.authenticate();
   await ensureScanJobScannerTypeEnum();
+  await ensureScheduledScansImportedRepositoryNullable();
   require("../models");
-  await sequelize.sync();
+  await sequelize.sync({ alter: true });
   console.log("PostgreSQL connected through Sequelize.");
   return sequelize;
+}
+
+async function ensureScheduledScansImportedRepositoryNullable() {
+  if (!sequelize) return;
+  try {
+    await sequelize.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'scheduled_scans' AND column_name = 'importedRepositoryId') THEN
+          ALTER TABLE "scheduled_scans" ALTER COLUMN "importedRepositoryId" DROP NOT NULL;
+        END IF;
+      END $$;
+    `);
+  } catch (error) {
+    console.error("Failed to alter importedRepositoryId to drop NOT NULL:", error);
+  }
 }
 
 async function ensureScanJobScannerTypeEnum() {

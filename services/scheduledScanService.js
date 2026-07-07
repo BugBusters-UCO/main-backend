@@ -2,9 +2,10 @@ const { randomUUID } = require("crypto");
 
 const { ScheduledScan, ImportedRepository, GithubAccount } = require("../models");
 const { normalizeScanners, startGithubScanBatch } = require("./scanBatchService");
-const { getRiskAssessment } = require("./riskAssessmentService");
+const { getRiskAssessment, createRiskAssessment } = require("./riskAssessmentService");
 const { sendRiskAssessmentReport } = require("./mailService");
 const { buildRiskReportPdf } = require("./riskReportPdfService");
+const { startAgentScan, getAgentById } = require("./agentService");
 
 const memorySchedules = new Map();
 const activeScheduleRuns = new Set();
@@ -16,11 +17,28 @@ const MAX_WAIT_MS = 45 * 60 * 1000;
 let schedulerTimer = null;
 
 async function createScheduledScan(userId, input = {}) {
-  const repository = await resolveRepository(userId, input.importedRepositoryId || input.imported_repository_id);
-  const payload = sanitizeScheduleInput(input, repository);
+  let sourceLabel = "unknown-source";
+  let repository = null;
+  
+  if (input.sourceType === "vm-agent") {
+    const agent = await getAgentById(input.agentId);
+    if (!agent) throw new Error("VM Agent not found");
+    sourceLabel = agent.name;
+  } else {
+    repository = await resolveRepository(userId, input.importedRepositoryId || input.imported_repository_id);
+    sourceLabel = repository.fullName;
+  }
+
+  const payload = sanitizeScheduleInput(input, sourceLabel);
   payload.userId = userId;
-  payload.importedRepositoryId = repository.id;
-  payload.sourceLabel = repository.fullName;
+  payload.sourceLabel = sourceLabel;
+  if (input.sourceType === "vm-agent") {
+    payload.agentId = input.agentId;
+    payload.selectedPaths = input.selectedPaths || [];
+    payload.scope = input.scope || "selected";
+  } else {
+    payload.importedRepositoryId = repository.id;
+  }
   payload.nextRunAt = calculateNextRunAt(payload).toISOString();
   payload.lastScanJobIds = [];
 
@@ -71,12 +89,29 @@ async function updateScheduledScan(userId, scheduleId, input = {}) {
   const existing = await getScheduledScan(userId, scheduleId);
   if (!existing) return null;
 
-  const repository = input.importedRepositoryId || input.imported_repository_id
-    ? await resolveRepository(userId, input.importedRepositoryId || input.imported_repository_id)
-    : await resolveRepository(userId, existing.importedRepositoryId);
-  const patch = sanitizeScheduleInput({ ...existing, ...input }, repository);
-  patch.importedRepositoryId = repository.id;
-  patch.sourceLabel = repository.fullName;
+  let sourceLabel = existing.sourceLabel;
+  let repository = null;
+  const isVmAgent = (input.sourceType || existing.sourceType) === "vm-agent";
+
+  if (isVmAgent) {
+    const agentId = input.agentId || existing.agentId;
+    const agent = await getAgentById(agentId);
+    if (agent) sourceLabel = agent.name;
+  } else {
+    const repoId = input.importedRepositoryId || input.imported_repository_id || existing.importedRepositoryId;
+    repository = await resolveRepository(userId, repoId);
+    sourceLabel = repository.fullName;
+  }
+
+  const patch = sanitizeScheduleInput({ ...existing, ...input }, sourceLabel);
+  patch.sourceLabel = sourceLabel;
+  if (isVmAgent) {
+    patch.agentId = input.agentId || existing.agentId;
+    patch.selectedPaths = input.selectedPaths || existing.selectedPaths || [];
+    patch.scope = input.scope || existing.scope || "selected";
+  } else {
+    patch.importedRepositoryId = repository.id;
+  }
   patch.nextRunAt = calculateNextRunAt(patch).toISOString();
 
   if (ScheduledScan) {
@@ -144,33 +179,59 @@ async function runSchedule(scheduleId) {
   });
 
   try {
-    const repository = await resolveRepository(schedule.userId, schedule.importedRepositoryId);
-    const account = repository.githubAccountId && GithubAccount
-      ? await GithubAccount.findOne({ where: { id: repository.githubAccountId, userId: schedule.userId } })
-      : null;
-    const batch = await startGithubScanBatch(schedule.userId, {
-      repository,
-      githubToken: account?.accessToken,
-      scanners: schedule.scanners,
-      businessContext: schedule.businessContext,
-      policy: {
-        failOn: "high",
-        includeLow: true,
-        includeDev: true,
-        useOsv: true,
-        bankingProfile: "strict",
-        enableLiveProbe: true
-      }
-    });
+    let assessmentId = null;
+    let jobIds = [];
+    let batchPromise = Promise.resolve();
+
+    if (schedule.sourceType === "vm-agent") {
+      const job = await startAgentScan(schedule.userId, schedule.agentId, {
+        modules: schedule.scanners,
+        paths: schedule.selectedPaths || [],
+        scope: schedule.scope || "selected",
+        projectName: schedule.name,
+      });
+      if (!job) throw new Error("Could not start agent scan");
+
+      jobIds = [job.id];
+      const assessment = await createRiskAssessment(schedule.userId, {
+        sourceType: "vm-agent",
+        sourceLabel: schedule.sourceLabel,
+        agentScanJobIds: jobIds,
+        businessContext: schedule.businessContext,
+      });
+      assessmentId = assessment.id;
+    } else {
+      const repository = await resolveRepository(schedule.userId, schedule.importedRepositoryId);
+      const account = repository.githubAccountId && GithubAccount
+        ? await GithubAccount.findOne({ where: { id: repository.githubAccountId, userId: schedule.userId } })
+        : null;
+      const batch = await startGithubScanBatch(schedule.userId, {
+        repository,
+        githubToken: account?.accessToken,
+        scanners: schedule.scanners,
+        businessContext: schedule.businessContext,
+        policy: {
+          failOn: "high",
+          includeLow: true,
+          includeDev: true,
+          useOsv: true,
+          bankingProfile: "strict",
+          enableLiveProbe: true
+        }
+      });
+      jobIds = batch.jobs.map((job) => job.id);
+      assessmentId = batch.assessment.id;
+      batchPromise = batch.completion;
+    }
 
     await updateSchedule(schedule.id, {
       lastStatus: "scanning",
-      lastScanJobIds: batch.jobs.map((job) => job.id),
-      lastRiskAssessmentId: batch.assessment.id
+      lastScanJobIds: jobIds,
+      lastRiskAssessmentId: assessmentId
     });
 
-    await batch.completion;
-    const assessment = await waitForAssessment(schedule.userId, batch.assessment.id);
+    await batchPromise;
+    const assessment = await waitForAssessment(schedule.userId, assessmentId);
     let mailError = null;
 
     if (assessment?.status === "completed" && schedule.reportEmail) {
@@ -186,7 +247,7 @@ async function runSchedule(scheduleId) {
     await updateSchedule(schedule.id, {
       running: false,
       lastStatus: assessment?.status === "completed" ? "completed" : (assessment?.status || "completed"),
-      lastRiskAssessmentId: batch.assessment.id,
+      lastRiskAssessmentId: assessmentId,
       nextRunAt: calculateNextRunAt(schedule, new Date(Date.now() + 1000)).toISOString(),
       lastError: assessment?.error || mailError
     });
@@ -263,13 +324,13 @@ async function updateSchedule(scheduleId, patch) {
   return updated;
 }
 
-function sanitizeScheduleInput(input, repository) {
+function sanitizeScheduleInput(input, sourceLabel) {
   const frequency = FREQUENCIES.has(String(input.frequency)) ? String(input.frequency) : "daily";
   const timeOfDay = validTime(input.timeOfDay || input.time_of_day) ? String(input.timeOfDay || input.time_of_day) : "09:00";
   return {
-    name: String(input.name || `${repository.fullName} scheduled scan`).slice(0, 120),
-    sourceType: "github",
-    sourceLabel: repository.fullName,
+    name: String(input.name || `${sourceLabel} scheduled scan`).slice(0, 120),
+    sourceType: input.sourceType || "github",
+    sourceLabel: sourceLabel,
     scanners: normalizeScanners(input.scanners),
     frequency,
     timeOfDay,
