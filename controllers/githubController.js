@@ -37,12 +37,12 @@ async function githubOAuthCallback(req, res, next) {
     });
     console.log(`GitHub OAuth connected for ${user.login}`);
 
-    const redirectUrl = new URL(env.frontendUrl);
+    const redirectUrl = new URL(env.frontendUrl + "/vc-dashboard");
     redirectUrl.searchParams.set("githubSession", sessionId);
     redirectUrl.searchParams.set("githubConnected", "true");
     res.redirect(redirectUrl.toString());
   } catch (error) {
-    const redirectUrl = new URL(env.frontendUrl);
+    const redirectUrl = new URL(env.frontendUrl + "/vc-dashboard");
     redirectUrl.searchParams.set("githubError", error.message);
     res.redirect(redirectUrl.toString());
   }
