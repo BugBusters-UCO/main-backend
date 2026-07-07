@@ -8,6 +8,7 @@ const {
   getRiskAssessment,
   listRiskAssessments
 } = require("../services/riskAssessmentService");
+const { buildRiskReportPdf } = require("../services/riskReportPdfService");
 
 async function getBusinessInputs(_req, res, next) {
   try {
@@ -61,11 +62,28 @@ async function createAssessmentRemedies(req, res, next) {
   }
 }
 
+async function downloadPdf(req, res, next) {
+  try {
+    const assessment = await getRiskAssessment(req.user.id, req.params.assessmentId);
+    if (!assessment) return res.status(404).json({ message: "Risk assessment not found" });
+    if (assessment.status !== "completed") return res.status(400).json({ message: "Risk assessment is not completed" });
+    
+    const pdfBuffer = await buildRiskReportPdf(assessment);
+    
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="risk-report-${assessment.id}.pdf"`);
+    res.send(Buffer.from(pdfBuffer));
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   getBusinessInputs,
   getRiskOverview,
   createAssessment,
   createAssessmentRemedies,
   getAssessments,
-  getAssessment
+  getAssessment,
+  downloadPdf
 };

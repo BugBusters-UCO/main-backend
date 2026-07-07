@@ -236,7 +236,7 @@ async function runSchedule(scheduleId) {
 
     if (assessment?.status === "completed" && schedule.reportEmail) {
       try {
-        const pdf = buildRiskReportPdf(assessment);
+        const pdf = await buildRiskReportPdf(assessment);
         const mailResult = await sendRiskAssessmentReport(schedule.reportEmail, assessment, pdf);
         if (mailResult.skipped) mailError = mailResult.reason;
       } catch (error) {

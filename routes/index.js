@@ -10,6 +10,7 @@ const riskRoutes = require("./riskRoutes");
 const githubRoutes = require("./githubRoutes");
 const agentRoutes = require("./agentRoutes");
 const scheduledScanRoutes = require("./scheduledScanRoutes");
+const dashboardRoutes = require("./dashboardRoutes");
 
 router.use("/health", healthRoutes);
 router.use("/auth", authRoutes);
@@ -21,5 +22,6 @@ router.use("/risk", riskRoutes);
 router.use("/github", githubRoutes);
 router.use("/agents", agentRoutes);
 router.use("/scheduled-scans", scheduledScanRoutes);
+router.use("/dashboard", dashboardRoutes);
 
 module.exports = router;
