@@ -25,7 +25,7 @@ function createSequelizeInstance() {
       ? {
           ssl: {
             require: true,
-            rejectUnauthorized: false
+            rejectUnauthorized: true
           }
         }
       : {},
@@ -45,11 +45,36 @@ async function connectDatabase() {
   }
   await sequelize.authenticate();
   await ensureScanJobScannerTypeEnum();
+  await ensureScanJobCancellationSchema();
+  await ensureScanJobSourceTypeEnum();
+  await ensureUserRoleEnum();
   await ensureScheduledScansImportedRepositoryNullable();
   require("../models");
-  await sequelize.sync({ alter: true });
+  await sequelize.sync({ alter: env.nodeEnv !== "production" });
   console.log("PostgreSQL connected through Sequelize.");
   return sequelize;
+}
+
+async function ensureScanJobSourceTypeEnum() {
+  if (!sequelize) return;
+  for (const value of ["gitlab", "bitbucket", "azuredevops"]) {
+    try {
+      await sequelize.query(`ALTER TYPE "enum_scan_jobs_sourceType" ADD VALUE IF NOT EXISTS '${value}'`);
+    } catch (error) {
+      console.error(`Failed to add scan source type ${value}:`, error.message);
+    }
+  }
+}
+
+async function ensureUserRoleEnum() {
+  if (!sequelize) return;
+  for (const value of ["security_admin", "department_admin", "auditor"]) {
+    try {
+      await sequelize.query(`ALTER TYPE "enum_users_role" ADD VALUE IF NOT EXISTS '${value}'`);
+    } catch (error) {
+      console.error(`Failed to add user role ${value}:`, error.message);
+    }
+  }
 }
 
 async function ensureScheduledScansImportedRepositoryNullable() {
@@ -79,6 +104,20 @@ async function ensureScanJobScannerTypeEnum() {
       END IF;
     END $$;
   `);
+}
+
+async function ensureScanJobCancellationSchema() {
+  if (!sequelize) return;
+  await sequelize.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_scan_jobs_status') THEN
+        ALTER TYPE "enum_scan_jobs_status" ADD VALUE IF NOT EXISTS 'cancelled';
+      END IF;
+    END $$;
+  `);
+  await sequelize.query('ALTER TABLE "scan_jobs" ADD COLUMN IF NOT EXISTS "cancelRequested" BOOLEAN NOT NULL DEFAULT false');
+  await sequelize.query('ALTER TABLE "scan_jobs" ADD COLUMN IF NOT EXISTS "cancelledAt" TIMESTAMP WITH TIME ZONE');
 }
 
 module.exports = { sequelize, connectDatabase, loadSequelize };

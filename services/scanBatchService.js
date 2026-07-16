@@ -8,6 +8,8 @@ const { runConfigScan } = require("./configScannerService");
 const { runSecretScan } = require("./secretScannerService");
 const { runCipherScan } = require("./cipherScannerService");
 const { createRiskAssessment } = require("./riskAssessmentService");
+const { enqueueConfigScan } = require("./configScanQueue");
+const { enqueueCipherScan } = require("./cipherScanQueue");
 
 const SCANNER_SET = new Set(["dependency", "config", "secret", "cipher"]);
 
@@ -48,6 +50,7 @@ async function startGithubScanBatch(userId, input = {}) {
     jobs.map((job) =>
       runScannerJob(job.id, {
         scanner: job.scannerType,
+        userId,
         repository,
         githubToken: input.githubToken,
         policy: input.policy || {}
@@ -59,6 +62,29 @@ async function startGithubScanBatch(userId, input = {}) {
 }
 
 async function runScannerJob(jobId, input) {
+  if (input.scanner === "config") {
+    return enqueueConfigScan(jobId, {
+      sourceType: "github",
+      sourceLabel: input.repository.fullName,
+      repoUrl: input.repository.cloneUrl,
+      githubToken: input.githubToken,
+      userId: input.userId,
+      failOn: input.policy.failOn || "high",
+      includeLow: bool(input.policy.includeLow, true)
+    });
+  }
+  if (input.scanner === "cipher") {
+    return enqueueCipherScan(jobId, {
+      sourceType: "github",
+      sourceLabel: input.repository.fullName,
+      repoUrl: input.repository.cloneUrl,
+      userId: input.userId,
+      failOn: input.policy.failOn || "high",
+      includeLow: bool(input.policy.includeLow, true),
+      bankingProfile: input.policy.bankingProfile || "strict",
+      enableLiveProbe: bool(input.policy.enableLiveProbe, true)
+    });
+  }
   const startedAt = Date.now();
   await updateJob(jobId, { status: "running" });
   addLog(jobId, "info", `${label(input.scanner)} scheduled scan started`);

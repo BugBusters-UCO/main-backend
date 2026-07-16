@@ -6,6 +6,13 @@ const { getRiskAssessment, createRiskAssessment } = require("./riskAssessmentSer
 const { sendRiskAssessmentReport } = require("./mailService");
 const { buildRiskReportPdf } = require("./riskReportPdfService");
 const { startAgentScan, getAgentById } = require("./agentService");
+const { createCipherAssetScan } = require("./cipherAssetScanService");
+const { enqueueScheduledScan, startScheduledScanQueueWorker } = require("./scheduledScanQueue");
+const env = require("../config/env");
+
+function redisQueueAllowed() {
+  return env.redis.enabled && (!env.banking?.strictOffline || env.banking?.allowMetadataRedisQueue === true);
+}
 
 const memorySchedules = new Map();
 const activeScheduleRuns = new Set();
@@ -24,6 +31,8 @@ async function createScheduledScan(userId, input = {}) {
     const agent = await getAgentById(input.agentId);
     if (!agent) throw new Error("VM Agent not found");
     sourceLabel = agent.name;
+  } else if (input.sourceType === "cipher-assets") {
+    sourceLabel = "Cipher asset inventory";
   } else {
     repository = await resolveRepository(userId, input.importedRepositoryId || input.imported_repository_id);
     sourceLabel = repository.fullName;
@@ -36,6 +45,9 @@ async function createScheduledScan(userId, input = {}) {
     payload.agentId = input.agentId;
     payload.selectedPaths = input.selectedPaths || [];
     payload.scope = input.scope || "selected";
+  } else if (input.sourceType === "cipher-assets") {
+    payload.assetIds = Array.isArray(input.assetIds) ? input.assetIds.map(String).slice(0, 500) : [];
+    payload.maxEndpoints = Math.max(1, Math.min(50, Number(input.maxEndpoints || 50)));
   } else {
     payload.importedRepositoryId = repository.id;
   }
@@ -97,6 +109,8 @@ async function updateScheduledScan(userId, scheduleId, input = {}) {
     const agentId = input.agentId || existing.agentId;
     const agent = await getAgentById(agentId);
     if (agent) sourceLabel = agent.name;
+  } else if ((input.sourceType || existing.sourceType) === "cipher-assets") {
+    sourceLabel = "Cipher asset inventory";
   } else {
     const repoId = input.importedRepositoryId || input.imported_repository_id || existing.importedRepositoryId;
     repository = await resolveRepository(userId, repoId);
@@ -109,6 +123,9 @@ async function updateScheduledScan(userId, scheduleId, input = {}) {
     patch.agentId = input.agentId || existing.agentId;
     patch.selectedPaths = input.selectedPaths || existing.selectedPaths || [];
     patch.scope = input.scope || existing.scope || "selected";
+  } else if ((input.sourceType || existing.sourceType) === "cipher-assets") {
+    patch.assetIds = Array.isArray(input.assetIds) ? input.assetIds.map(String).slice(0, 500) : (existing.assetIds || []);
+    patch.maxEndpoints = Math.max(1, Math.min(50, Number(input.maxEndpoints || existing.maxEndpoints || 50)));
   } else {
     patch.importedRepositoryId = repository.id;
   }
@@ -137,12 +154,23 @@ async function deleteScheduledScan(userId, scheduleId) {
 async function runScheduleNow(userId, scheduleId) {
   const schedule = await getScheduledScan(userId, scheduleId);
   if (!schedule) return null;
+  if (redisQueueAllowed()) {
+    activeScheduleRuns.add(schedule.id);
+    await enqueueScheduledScan(schedule.id);
+    return updateSchedule(schedule.id, { lastStatus: "queued", lastError: null });
+  }
   runSchedule(schedule.id).catch((error) => console.error(`Scheduled scan ${schedule.id} failed:`, error.message));
   return updateSchedule(schedule.id, { lastStatus: "queued", lastError: null });
 }
 
 function startScheduledScanWorker() {
   if (schedulerTimer) return;
+  if (redisQueueAllowed()) {
+    startScheduledScanQueueWorker(async (scheduleId) => {
+      activeScheduleRuns.delete(scheduleId);
+      return runSchedule(scheduleId);
+    }).catch((error) => console.error("Scheduled Redis worker failed:", error.message));
+  }
   schedulerTimer = setInterval(() => {
     runDueSchedules().catch((error) => console.error("Scheduled scan worker failed:", error.message));
   }, TICK_MS);
@@ -157,7 +185,15 @@ async function runDueSchedules() {
   for (const schedule of schedules) {
     if (!schedule.enabled || schedule.running || activeScheduleRuns.has(schedule.id)) continue;
     if (!schedule.nextRunAt || new Date(schedule.nextRunAt).getTime() > now.getTime()) continue;
-    runSchedule(schedule.id).catch((error) => console.error(`Scheduled scan ${schedule.id} failed:`, error.message));
+    if (redisQueueAllowed()) {
+      activeScheduleRuns.add(schedule.id);
+      enqueueScheduledScan(schedule.id).catch((error) => {
+        activeScheduleRuns.delete(schedule.id);
+        console.error(`Scheduled scan ${schedule.id} enqueue failed:`, error.message);
+      });
+    } else {
+      runSchedule(schedule.id).catch((error) => console.error(`Scheduled scan ${schedule.id} failed:`, error.message));
+    }
   }
 }
 
@@ -200,6 +236,24 @@ async function runSchedule(scheduleId) {
         businessContext: schedule.businessContext,
       });
       assessmentId = assessment.id;
+    } else if (schedule.sourceType === "cipher-assets") {
+      const job = await createCipherAssetScan(schedule.userId, {
+        assetIds: schedule.assetIds || [],
+        maxEndpoints: schedule.maxEndpoints || 50,
+        failOn: "high",
+        includeLow: true,
+        bankingProfile: "strict",
+        sourceLabel: schedule.name
+      });
+      jobIds = [job.id];
+      const assessment = await createRiskAssessment(schedule.userId, {
+        sourceType: "cipher-assets",
+        sourceLabel: schedule.sourceLabel,
+        scanJobIds: jobIds,
+        businessContext: schedule.businessContext
+      });
+      assessmentId = assessment.id;
+      batchPromise = Promise.resolve();
     } else {
       const repository = await resolveRepository(schedule.userId, schedule.importedRepositoryId);
       const account = repository.githubAccountId && GithubAccount
@@ -331,7 +385,7 @@ function sanitizeScheduleInput(input, sourceLabel) {
     name: String(input.name || `${sourceLabel} scheduled scan`).slice(0, 120),
     sourceType: input.sourceType || "github",
     sourceLabel: sourceLabel,
-    scanners: normalizeScanners(input.scanners),
+    scanners: normalizeScanners(input.sourceType === "cipher-assets" ? ["cipher"] : input.scanners),
     frequency,
     timeOfDay,
     timesPerDay: clamp(Number(input.timesPerDay || input.times_per_day || 1), 1, 8),

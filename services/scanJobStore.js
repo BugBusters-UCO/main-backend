@@ -44,7 +44,28 @@ async function listJobs(filters = {}) {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-module.exports = { createJob, updateJob, getJob, listJobs };
+async function findByDeliveryId(deliveryId) {
+  if (!deliveryId) return null;
+  if (ScanJob) {
+    const row = await ScanJob.findOne({ where: { deliveryId } });
+    return row ? _plainJob(row) : null;
+  }
+  return [...jobs.values()].find((job) => job.deliveryId === deliveryId) || null;
+}
+
+async function countActiveJobs(filters = {}) {
+  const statuses = ["queued", "running"];
+  if (ScanJob) {
+    const where = { status: statuses };
+    if (filters.userId) where.userId = filters.userId;
+    return ScanJob.count({ where });
+  }
+  return Array.from(jobs.values())
+    .filter((job) => statuses.includes(job.status))
+    .filter((job) => !filters.userId || job.userId === filters.userId).length;
+}
+
+module.exports = { createJob, updateJob, getJob, listJobs, findByDeliveryId, countActiveJobs };
 
 function _dbJob(job) {
   return {
@@ -54,7 +75,13 @@ function _dbJob(job) {
     scannerType: job.scannerType || "dependency",
     sourceType: job.sourceType,
     sourceLabel: job.sourceLabel,
+    repoUrl: job.repoUrl || null,
+    commitSha: job.commitSha || null,
+    deliveryId: job.deliveryId || null,
+    departmentId: job.departmentId || null,
     status: job.status,
+    cancelRequested: Boolean(job.cancelRequested),
+    cancelledAt: job.cancelledAt || null,
     result: job.result || null,
     error: job.error || null,
     completedAt: job.completedAt || null

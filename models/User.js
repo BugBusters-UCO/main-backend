@@ -26,8 +26,23 @@ if (sequelize) {
         allowNull: false
       },
       role: {
-        type: DataTypes.ENUM("admin", "developer", "viewer"),
+        type: DataTypes.ENUM("admin", "security_admin", "department_admin", "auditor", "developer", "viewer"),
         defaultValue: "developer"
+      },
+      departmentId: {
+        type: DataTypes.STRING,
+        allowNull: true
+      },
+      mfaEnabled: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false
+      },
+      mfaSecretEncrypted: { type: DataTypes.TEXT, allowNull: true },
+      ssoSubject: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        unique: true
       }
     },
     {

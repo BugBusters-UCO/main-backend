@@ -9,14 +9,20 @@ const { getStoredGithubAccount, resolveSessionToken } = require("../services/git
 const { extractZip } = require("../services/zipService");
 const { runSecretScan } = require("../services/secretScannerService");
 const { sendScanReport } = require("../services/mailService");
+const { enqueueSecretScan } = require("../services/secretScanQueue");
+const env = require("../config/env");
+const { formatScanResult } = require("../services/scanArtifactService");
+const { recordAudit, recordAuditEvent } = require("../services/auditService");
+const { persistSecretFindings } = require("../services/secretFindingStore");
+const { approveRotation, requestRotation } = require("../services/secretRotationService");
 
 async function startGithubSecretScan(req, res, next) {
   try {
     const { repoCloneUrl, repoFullName, githubSession, email, failOn, includeLow, importedRepositoryId } = req.body;
-    const githubToken = await _githubTokenForUser(githubSession, req.user.id);
     const job = await createJob(_newJob("github", repoFullName || repoCloneUrl, req.user.id, importedRepositoryId));
+    await recordAudit(req, "secret-scan.created", "secret-scan", job.id, { sourceType: "github", sourceLabel: repoFullName || repoCloneUrl });
     res.status(202).json(job);
-    _runJob(job.id, { sourceType: "github", sourceLabel: repoFullName, repoUrl: repoCloneUrl, githubToken, email, failOn, includeLow }).catch(next);
+    _dispatchSecretJob(job.id, { sourceType: "github", sourceLabel: repoFullName, repoUrl: repoCloneUrl, githubSession, userId: req.user.id, email, failOn, includeLow }).catch((error) => _markQueueFailure(job.id, error));
   } catch (error) {
     next(error);
   }
@@ -30,10 +36,12 @@ async function startZipSecretScan(req, res, next) {
 
     const { email, failOn, includeLow } = req.body;
     const job = await createJob(_newJob("zip", req.file.originalname, req.user.id, null));
+    await recordAudit(req, "secret-scan.created", "secret-scan", job.id, { sourceType: "zip", sourceLabel: req.file.originalname });
     res.status(202).json(job);
-    _runJob(job.id, {
+    _dispatchSecretJob(job.id, {
       sourceType: "zip",
       zipPath: req.file.path,
+      userId: req.user.id,
       email,
       failOn,
       includeLow
@@ -41,6 +49,16 @@ async function startZipSecretScan(req, res, next) {
   } catch (error) {
     next(error);
   }
+}
+
+async function _dispatchSecretJob(jobId, input) {
+  return enqueueSecretScan(jobId, input);
+}
+
+async function runQueuedSecretScan(jobId, input) {
+  const result = await _runJob(jobId, input);
+  if (!result) throw new Error("Secret scan execution failed; retrying worker job");
+  return result;
 }
 
 async function getSecretScanJob(req, res) {
@@ -110,7 +128,15 @@ async function _runJob(jobId, input) {
       const cloneStartedAt = Date.now();
       addLog(jobId, "info", "Step 2/8 - Importing repository from GitHub");
       addLog(jobId, "info", `Connecting to ${input.sourceLabel || "selected repository"} and downloading the latest source snapshot`);
-      projectPath = await cloneRepository(input.repoUrl, jobId, input.githubToken);
+      const githubToken = input.userId
+        ? await _githubTokenForUser(input.githubSession, input.userId)
+        : env.webhook.providerTokens[input.provider || "github"];
+      const historyDepth = _bool(input.completeGitHistory, false)
+        ? 0
+        : _bool(input.includeGitHistory, true)
+          ? Math.min(500, Math.max(1, Number(input.maxHistoryCommits || 100) + 1))
+          : 1;
+      projectPath = await cloneRepository(input.repoUrl, jobId, githubToken, input.provider || "github", input.commitSha || null, historyDepth);
       addLog(jobId, "success", `Repository imported successfully in ${_seconds(Date.now() - cloneStartedAt)}`);
     } else {
       const extractStartedAt = Date.now();
@@ -124,7 +150,14 @@ async function _runJob(jobId, input) {
     addLog(jobId, "info", "Handing the imported source to the FastAPI secret scanner");
     const result = await runSecretScan(projectPath, {
       failOn: input.failOn || "high",
-      includeLow: _bool(input.includeLow, true)
+      includeLow: _bool(input.includeLow, true),
+      includeGitHistory: _bool(input.includeGitHistory, true),
+      maxHistoryCommits: Number(input.maxHistoryCommits || 100),
+      completeGitHistory: _bool(input.completeGitHistory, false),
+      changedFiles: Array.isArray(input.changedFiles) ? input.changedFiles : null,
+      maxFiles: Number(input.maxFiles || 8000),
+      maxTotalBytes: Number(input.maxTotalBytes || 1000000000),
+      maxFileBytes: Number(input.maxFileBytes || 5000000)
     });
 
     const summary = result.summary || {};
@@ -191,6 +224,14 @@ async function _runJob(jobId, input) {
       completedAt: new Date().toISOString()
     });
 
+    const persisted = await persistSecretFindings(jobId, result);
+    await recordAuditEvent({ actorId: input.userId || null }, "secret-scan.completed", "secret-scan", jobId, {
+      totalFindings: summary.total_findings || 0,
+      persistedFindings: persisted.persisted,
+      riskScore: summary.risk_score || 0,
+      ciStatus: summary.ci_status || "unknown"
+    });
+
     if (input.email) {
       addLog(jobId, "info", "Sending secret scan report email");
       const mailResult = await sendScanReport(input.email, "Secret scan report", result);
@@ -206,12 +247,52 @@ async function _runJob(jobId, input) {
       error: safeMessage,
       completedAt: new Date().toISOString()
     });
+    await recordAuditEvent({ actorId: input.userId || null }, "secret-scan.failed", "secret-scan", jobId, { error: safeMessage.slice(0, 500) });
     return null;
   } finally {
     if (input.zipPath) {
       fs.rm(input.zipPath, { force: true }, () => {});
     }
   }
+}
+
+async function getSecretScanArtifact(req, res, next) {
+  try {
+    const job = await getJob(req.params.jobId);
+    if (!job || job.scannerType !== "secret" || (job.userId && job.userId !== req.user.id)) {
+      return res.status(404).json({ message: "Secret scan job not found" });
+    }
+    if (!job.result) return res.status(409).json({ message: "Secret scan has not completed" });
+    await recordAudit(req, "secret-scan.artifact_accessed", "secret-scan", job.id, { format: req.params.format });
+    const artifact = formatScanResult(job.result, req.params.format);
+    res.setHeader("Content-Type", artifact.contentType);
+    res.setHeader("Content-Disposition", `attachment; filename=secret-scan-${job.id}.${artifact.extension}`);
+    return res.send(artifact.body);
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function requestSecretRotation(req, res, next) {
+  try {
+    const action = await requestRotation(req, req.params.jobId, req.params.findingId, req.body || {});
+    if (!action) return res.status(404).json({ message: "Secret finding not found" });
+    return res.status(action.status === "pending_approval" ? 202 : 200).json(action);
+  } catch (error) { return next(error); }
+}
+
+async function approveSecretRotation(req, res, next) {
+  try {
+    const action = await approveRotation(req, req.params.actionId);
+    if (!action) return res.status(404).json({ message: "Secret rotation action not found" });
+    return res.json(action);
+  } catch (error) { return next(error); }
+}
+
+async function _markQueueFailure(jobId, error) {
+  const safeMessage = sanitizeGitError(error.message || "Secret scan could not be queued");
+  await updateJob(jobId, { status: "failed", error: safeMessage, completedAt: new Date().toISOString() });
+  addLog(jobId, "error", safeMessage);
 }
 
 function _newJob(sourceType, sourceLabel, userId, importedRepositoryId) {
@@ -271,5 +352,9 @@ module.exports = {
   startZipSecretScan,
   getSecretScanJob,
   getSecretScanJobs,
-  streamSecretScanLogs
+  streamSecretScanLogs,
+  getSecretScanArtifact,
+  requestSecretRotation,
+  approveSecretRotation,
+  runQueuedSecretScan
 };

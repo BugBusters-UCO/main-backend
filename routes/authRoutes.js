@@ -5,5 +5,7 @@ const { requireAuth } = require("../middleware/authMiddleware");
 router.post("/register", authController.register);
 router.post("/login", authController.login);
 router.get("/me", requireAuth, authController.me);
+router.post("/mfa/enroll", requireAuth, authController.beginMfa);
+router.post("/mfa/verify", requireAuth, authController.verifyMfa);
 
 module.exports = router;

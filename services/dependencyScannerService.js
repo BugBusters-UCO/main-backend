@@ -17,7 +17,10 @@ async function runDependencyScan(projectPath, options = {}) {
       fail_on: options.failOn || "high",
       max_depth: options.maxDepth || 8
     },
-    { timeout: 120000 }
+    {
+      timeout: 120000,
+      headers: env.scannerApiToken ? { "x-scanner-token": env.scannerApiToken } : undefined
+    }
   );
   return {
     ...response.data,

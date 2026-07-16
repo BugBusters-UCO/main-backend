@@ -7,6 +7,8 @@ router.use(requireAuth);
 router.get("/", scanController.getScanJobs);
 router.get("/:jobId", scanController.getScanJob);
 router.get("/:jobId/logs", scanController.streamScanLogs);
+router.get("/:jobId/artifacts/:format", scanController.getScanArtifact);
+router.get("/:jobId/gate", scanController.getScanGate);
 router.post("/github", scanController.startGithubScan);
 router.post("/zip", uploadZip.single("repoZip"), scanController.startZipScan);
 

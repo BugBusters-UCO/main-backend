@@ -6,6 +6,13 @@ const Agent = require("./Agent");
 const AgentScanJob = require("./AgentScanJob");
 const RiskAssessment = require("./RiskAssessment");
 const ScheduledScan = require("./ScheduledScan");
+const Advisory = require("./Advisory");
+const FindingReview = require("./FindingReview");
+const AuditEvent = require("./AuditEvent");
+const QuarantineRecord = require("./QuarantineRecord");
+const AdvisoryFeedState = require("./AdvisoryFeedState");
+const SecretFinding = require("./SecretFinding");
+const SecretRotationAction = require("./SecretRotationAction");
 
 function applyAssociations() {
   if (!User || !ScanJob || !GithubAccount || !ImportedRepository) return;
@@ -56,5 +63,12 @@ module.exports = {
   AgentScanJob,
   RiskAssessment,
   ScheduledScan,
+  Advisory,
+  FindingReview,
+  AuditEvent,
+  QuarantineRecord,
+  AdvisoryFeedState,
+  SecretFinding,
+  SecretRotationAction,
   applyAssociations
 };

@@ -3,6 +3,8 @@ const jwt = require("jsonwebtoken");
 
 const env = require("../config/env");
 const { User } = require("../models");
+const { encrypt, generateSecret, decrypt, otpauthUri, verifyTotp } = require("../services/mfaService");
+const { recordAudit } = require("../services/auditService");
 
 function requireUserModel() {
   if (!User) {
@@ -57,15 +59,43 @@ function me(req, res) {
   res.json({ user: req.user });
 }
 
-function _authPayload(user) {
+async function beginMfa(req, res, next) {
+  try {
+    requireUserModel();
+    const user = await User.findByPk(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const secret = generateSecret();
+    await user.update({ mfaSecretEncrypted: encrypt(secret, env.identity.mfaEncryptionKey), mfaEnabled: false });
+    await recordAudit(req, "mfa.enrollment_started", "user", user.id, {});
+    return res.json({ secret, otpauthUri: otpauthUri(secret, user.email), message: "Confirm the code from the authenticator before MFA becomes active" });
+  } catch (error) { return next(error); }
+}
+
+async function verifyMfa(req, res, next) {
+  try {
+    requireUserModel();
+    const user = await User.findByPk(req.user.id);
+    if (!user?.mfaSecretEncrypted) return res.status(400).json({ message: "MFA enrollment has not started" });
+    const secret = decrypt(user.mfaSecretEncrypted, env.identity.mfaEncryptionKey);
+    if (!verifyTotp(secret, req.body?.code)) return res.status(401).json({ message: "Invalid MFA code" });
+    await user.update({ mfaEnabled: true });
+    await recordAudit(req, "mfa.verified", "user", user.id, {});
+    return res.json(_authPayload(user, true));
+  } catch (error) { return next(error); }
+}
+
+function _authPayload(user, mfaVerified = null) {
   const safeUser = {
     id: user.id,
     name: user.name,
     email: user.email,
     role: user.role
+    ,departmentId: user.departmentId || null
+    ,mfaEnabled: Boolean(user.mfaEnabled)
   };
-  const token = jwt.sign(safeUser, env.jwtSecret, { expiresIn: env.jwtExpiresIn });
+  const verified = mfaVerified === null ? (!env.identity.mfaRequired || !safeUser.mfaEnabled) : mfaVerified;
+  const token = jwt.sign({ ...safeUser, mfaVerified: verified }, env.jwtSecret, { expiresIn: env.jwtExpiresIn });
   return { token, user: safeUser };
 }
 
-module.exports = { login, me, register };
+module.exports = { beginMfa, login, me, register, verifyMfa };

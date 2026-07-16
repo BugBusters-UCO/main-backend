@@ -7,6 +7,7 @@ router.use(requireAuth);
 router.get("/", configScanController.getConfigScanJobs);
 router.get("/:jobId", configScanController.getConfigScanJob);
 router.get("/:jobId/logs", configScanController.streamConfigScanLogs);
+router.post("/:jobId/cancel", configScanController.cancelConfigScan);
 router.post("/github", configScanController.startGithubConfigScan);
 router.post("/zip", uploadZip.single("repoZip"), configScanController.startZipConfigScan);
 

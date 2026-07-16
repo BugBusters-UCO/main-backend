@@ -3,6 +3,12 @@ const { checkConfigScannerHealth } = require("../services/configScannerService")
 const { checkSecretScannerHealth } = require("../services/secretScannerService");
 const { checkCipherScannerHealth } = require("../services/cipherScannerService");
 const { checkRiskEngineHealth } = require("../services/riskEngineService");
+const env = require("../config/env");
+const metrics = require("../services/operationalMetricsService");
+const { getConfigScanQueueStatus } = require("../services/configScanQueue");
+const { getSecretScanQueueStatus } = require("../services/secretScanQueue");
+const { getCipherScanQueueStatus } = require("../services/cipherScanQueue");
+const { getNotificationStatus } = require("../services/cipherNotificationService");
 
 async function health(_req, res) {
   let dependencyScanner = { status: "unreachable" };
@@ -63,8 +69,15 @@ async function health(_req, res) {
     configScanner,
     secretScanner,
     cipherScanner,
-    riskEngine
+    riskEngine,
+    infrastructure: { redisConfigured: env.redis.enabled, databaseConfigured: env.dbEnabled, workerConcurrency: env.redis.concurrency },
+    configScanQueue: getConfigScanQueueStatus(),
+    secretScanQueue: getSecretScanQueueStatus(),
+    cipherScanQueue: getCipherScanQueueStatus(),
+    cipherNotifications: getNotificationStatus()
   });
 }
 
-module.exports = { health };
+function metricsEndpoint(_req, res) { res.json(metrics.snapshot()); }
+
+module.exports = { health, metricsEndpoint };

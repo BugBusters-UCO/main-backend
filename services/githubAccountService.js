@@ -14,6 +14,11 @@ const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
 
 function requireOAuthConfig() {
+  if (env.banking.internalOnly || (env.banking.strictOffline && env.nodeEnv === "production")) {
+    const error = new Error("Public GitHub OAuth is disabled in bank-internal-only mode. Use an approved enterprise provider integration.");
+    error.statusCode = 403;
+    throw error;
+  }
   if (!env.github.clientId || !env.github.clientSecret) {
     const error = new Error("GitHub OAuth is not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET.");
     error.statusCode = 500;
@@ -115,6 +120,7 @@ function githubHeaders(token) {
 }
 
 async function getViewer(token) {
+  if (env.banking.internalOnly || (env.banking.strictOffline && env.nodeEnv === "production")) throw new Error("Public GitHub API access is disabled in bank-internal-only mode");
   const response = await axios.get(`${GITHUB_API}/user`, {
     headers: githubHeaders(token),
     timeout: 15000
@@ -162,6 +168,7 @@ async function disconnectGithubAccount(userId) {
 }
 
 async function listRepositories(token) {
+  if (env.banking.internalOnly || (env.banking.strictOffline && env.nodeEnv === "production")) throw new Error("Public GitHub API access is disabled in bank-internal-only mode");
   const response = await axios.get(`${GITHUB_API}/user/repos`, {
     headers: githubHeaders(token),
     params: {

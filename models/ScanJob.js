@@ -25,17 +25,23 @@ if (sequelize) {
         defaultValue: "dependency"
       },
       sourceType: {
-        type: DataTypes.ENUM("github", "zip", "local"),
+        type: DataTypes.ENUM("github", "gitlab", "bitbucket", "azuredevops", "zip", "local"),
         allowNull: false
       },
       sourceLabel: {
         type: DataTypes.STRING,
         allowNull: false
       },
+      repoUrl: { type: DataTypes.STRING, allowNull: true },
+      commitSha: { type: DataTypes.STRING, allowNull: true },
+      deliveryId: { type: DataTypes.STRING, allowNull: true, unique: true },
+      departmentId: { type: DataTypes.STRING, allowNull: true },
       status: {
-        type: DataTypes.ENUM("queued", "running", "completed", "failed"),
+        type: DataTypes.ENUM("queued", "running", "completed", "failed", "cancelled"),
         defaultValue: "queued"
       },
+      cancelRequested: { type: DataTypes.BOOLEAN, defaultValue: false },
+      cancelledAt: { type: DataTypes.DATE, allowNull: true },
       result: {
         type: DataTypes.JSONB,
         allowNull: true

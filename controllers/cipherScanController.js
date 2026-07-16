@@ -8,7 +8,9 @@ const { cloneRepository, sanitizeGitError } = require("../services/githubService
 const { getStoredGithubAccount, resolveSessionToken } = require("../services/githubAccountService");
 const { extractZip } = require("../services/zipService");
 const { runCipherScan } = require("../services/cipherScannerService");
+const { enqueueCipherScan } = require("../services/cipherScanQueue");
 const { sendScanReport } = require("../services/mailService");
+const { notifyCipherScan } = require("../services/cipherNotificationService");
 
 async function startGithubCipherScan(req, res, next) {
   try {
@@ -16,7 +18,7 @@ async function startGithubCipherScan(req, res, next) {
     const githubToken = await _githubTokenForUser(githubSession, req.user.id);
     const job = await createJob(_newJob("github", repoFullName || repoCloneUrl, req.user.id, importedRepositoryId));
     res.status(202).json(job);
-    _runJob(job.id, { sourceType: "github", sourceLabel: repoFullName, repoUrl: repoCloneUrl, githubToken, email, failOn, includeLow, bankingProfile }).catch(next);
+    _dispatchCipherJob(job.id, { sourceType: "github", sourceLabel: repoFullName, repoUrl: repoCloneUrl, githubToken, userId: req.user.id, email, failOn, includeLow, bankingProfile }).catch(next);
   } catch (error) {
     next(error);
   }
@@ -31,9 +33,10 @@ async function startZipCipherScan(req, res, next) {
     const { email, failOn, includeLow, bankingProfile } = req.body;
     const job = await createJob(_newJob("zip", req.file.originalname, req.user.id, null));
     res.status(202).json(job);
-    _runJob(job.id, {
+    _dispatchCipherJob(job.id, {
       sourceType: "zip",
       zipPath: req.file.path,
+      userId: req.user.id,
       email,
       failOn,
       includeLow,
@@ -42,6 +45,19 @@ async function startZipCipherScan(req, res, next) {
   } catch (error) {
     next(error);
   }
+}
+
+async function _dispatchCipherJob(jobId, input) {
+  await enqueueCipherScan(jobId, input);
+}
+
+async function runQueuedCipherScan(jobId, input) {
+  const resolvedInput = input.sourceType === "github" && !input.githubToken
+    ? { ...input, githubToken: await _githubTokenForUser(null, input.userId) }
+    : input;
+  const result = await _runJob(jobId, resolvedInput);
+  if (!result) throw new Error("Cipher scan execution failed; retrying worker job");
+  return result;
 }
 
 async function getCipherScanJob(req, res) {
@@ -102,7 +118,7 @@ async function _runJob(jobId, input) {
   const jobStartedAt = Date.now();
   await updateJob(jobId, { status: "running" });
   addLog(jobId, "info", "Step 1/8 - Pre-deployment cipher scan job created");
-  addLog(jobId, "info", `Using ${input.sourceType === "github" ? "GitHub repository import" : "ZIP upload"} as the source`);
+  addLog(jobId, "info", `Using ${input.sourceType === "github" ? "GitHub repository import" : input.sourceType === "assets" ? "asset inventory" : "ZIP upload"} as the source`);
   addLog(jobId, "info", `Policy selected: banking profile ${input.bankingProfile || "strict"}, include low severity ${_bool(input.includeLow, true) ? "yes" : "no"}, fail on ${input.failOn || "high"}`);
 
   try {
@@ -113,6 +129,9 @@ async function _runJob(jobId, input) {
       addLog(jobId, "info", `Downloading the latest source snapshot for ${input.sourceLabel || "selected repository"}`);
       projectPath = await cloneRepository(input.repoUrl, jobId, input.githubToken);
       addLog(jobId, "success", `Repository imported successfully in ${_seconds(Date.now() - cloneStartedAt)}`);
+    } else if (input.sourceType === "assets") {
+      projectPath = null;
+      addLog(jobId, "info", `Step 2/8 - Preparing ${input.targets?.length || 0} inventory target(s) for live TLS verification`);
     } else {
       const extractStartedAt = Date.now();
       addLog(jobId, "info", "Step 2/8 - Extracting uploaded repository archive");
@@ -126,7 +145,10 @@ async function _runJob(jobId, input) {
     const result = await runCipherScan(projectPath, {
       failOn: input.failOn || "high",
       includeLow: _bool(input.includeLow, true),
-      bankingProfile: input.bankingProfile || "strict"
+      bankingProfile: input.bankingProfile || "strict",
+      enableLiveProbe: input.enableLiveProbe ?? true,
+      maxLiveProbeEndpoints: input.maxLiveProbeEndpoints || input.targets?.length || 8,
+      targets: input.targets || []
     });
 
     const summary = result.summary || {};
@@ -191,6 +213,11 @@ async function _runJob(jobId, input) {
       completedAt: new Date().toISOString()
     });
 
+    const notification = await notifyCipherScan(updated);
+    if (notification.configured) {
+      addLog(jobId, notification.failed ? "warning" : "success", `Enterprise notifications delivered: ${notification.delivered}/${notification.configured}`);
+    }
+
     if (input.email) {
       addLog(jobId, "info", "Sending cipher scan report email");
       const mailResult = await sendScanReport(input.email, "Pre-deployment cipher scan report", result);
@@ -211,6 +238,19 @@ async function _runJob(jobId, input) {
     if (input.zipPath) {
       fs.rm(input.zipPath, { force: true }, () => {});
     }
+  }
+}
+
+async function notifyCipherScanJob(req, res, next) {
+  try {
+    const job = await getJob(req.params.jobId);
+    if (!job || job.scannerType !== "cipher" || (job.userId && job.userId !== req.user.id)) {
+      return res.status(404).json({ message: "Cipher scan job not found" });
+    }
+    if (job.status !== "completed") return res.status(409).json({ message: "Only completed cipher scans can be notified" });
+    return res.json(await notifyCipherScan(job, Array.isArray(req.body?.targets) ? req.body.targets : null));
+  } catch (error) {
+    return next(error);
   }
 }
 
@@ -256,5 +296,7 @@ module.exports = {
   startZipCipherScan,
   getCipherScanJob,
   getCipherScanJobs,
-  streamCipherScanLogs
+  streamCipherScanLogs,
+  notifyCipherScanJob,
+  runQueuedCipherScan
 };

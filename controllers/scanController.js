@@ -9,14 +9,28 @@ const { getStoredGithubAccount, resolveSessionToken } = require("../services/git
 const { extractZip } = require("../services/zipService");
 const { runDependencyScan } = require("../services/dependencyScannerService");
 const { sendScanReport } = require("../services/mailService");
+const { enqueueDependencyScan, isRedisEnabled } = require("../services/redisScanQueue");
+const { formatScanResult } = require("../services/scanArtifactService");
+const { recordAudit } = require("../services/auditService");
+const { createQuarantine } = require("../services/quarantineService");
 
 async function startGithubScan(req, res, next) {
   try {
     const { repoCloneUrl, repoFullName, githubSession, email, includeDev, useOsv, failOn, importedRepositoryId } = req.body;
-    const githubToken = await _githubTokenForUser(githubSession, req.user.id);
     const job = await createJob(_newJob("github", repoFullName || repoCloneUrl, req.user.id, importedRepositoryId));
+    await recordAudit(req, "scan.created", "scan-job", job.id, { scannerType: "dependency", sourceType: "github", sourceLabel: repoFullName || repoCloneUrl });
     res.status(202).json(job);
-    _runJob(job.id, { sourceType: "github", sourceLabel: repoFullName, repoUrl: repoCloneUrl, githubToken, email, includeDev, useOsv, failOn }).catch(next);
+    _dispatchDependencyJob(job.id, {
+      sourceType: "github",
+      sourceLabel: repoFullName,
+      repoUrl: repoCloneUrl,
+      githubSession,
+      userId: req.user.id,
+      email,
+      includeDev,
+      useOsv,
+      failOn
+    }).catch(next);
   } catch (error) {
     next(error);
   }
@@ -30,8 +44,9 @@ async function startZipScan(req, res, next) {
 
     const { email, includeDev, useOsv, failOn } = req.body;
     const job = await createJob(_newJob("zip", req.file.originalname, req.user.id, null));
+    await recordAudit(req, "scan.created", "scan-job", job.id, { scannerType: "dependency", sourceType: "zip", sourceLabel: req.file.originalname });
     res.status(202).json(job);
-    _runJob(job.id, {
+    _dispatchDependencyJob(job.id, {
       sourceType: "zip",
       zipPath: req.file.path,
       email,
@@ -42,6 +57,20 @@ async function startZipScan(req, res, next) {
   } catch (error) {
     next(error);
   }
+}
+
+async function _dispatchDependencyJob(jobId, input) {
+  if (isRedisEnabled()) {
+    await enqueueDependencyScan(jobId, input);
+    return;
+  }
+  return _runJob(jobId, input);
+}
+
+async function runQueuedDependencyScan(jobId, input) {
+  const result = await _runJob(jobId, input);
+  if (!result) throw new Error("Dependency scan execution failed; retrying worker job");
+  return result;
 }
 
 async function getScanJob(req, res) {
@@ -98,6 +127,31 @@ async function streamScanLogs(req, res) {
   req.on("close", unsubscribe);
 }
 
+async function getScanArtifact(req, res, next) {
+  try {
+    const job = await getJob(req.params.jobId);
+    if (!job || job.scannerType !== "dependency" || (job.userId && job.userId !== req.user.id)) {
+      return res.status(404).json({ message: "Scan job not found" });
+    }
+    if (job.status !== "completed" || !job.result) return res.status(409).json({ message: "Scan result is not ready" });
+    const artifact = formatScanResult(job.result, req.params.format);
+    res.type(artifact.contentType);
+    res.setHeader("Content-Disposition", `attachment; filename=bugbusters-${job.id}.${artifact.extension}`);
+    return res.send(artifact.body);
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function getScanGate(req, res) {
+  const job = await getJob(req.params.jobId);
+  if (!job || job.scannerType !== "dependency" || (job.userId && job.userId !== req.user.id)) return res.status(404).json({ message: "Scan job not found" });
+  if (job.status !== "completed" || !job.result) return res.status(409).json({ decision: "pending", status: job.status });
+  const summary = job.result.summary || {};
+  const allowed = summary.ci_status === "passed" && summary.banking_action !== "block";
+  return res.status(allowed ? 200 : 409).json({ decision: allowed ? "allow" : "block", allowed, jobId: job.id, commitSha: job.commitSha || null, artifactDigest: job.result.artifact?.artifact_sha256 || null, riskScore: summary.risk_score ?? null, bankingAction: summary.banking_action || null, findingsBySeverity: summary.findings_by_severity || {} });
+}
+
 async function _runJob(jobId, input) {
   const jobStartedAt = Date.now();
   await updateJob(jobId, { status: "running" });
@@ -111,7 +165,9 @@ async function _runJob(jobId, input) {
       const cloneStartedAt = Date.now();
       addLog(jobId, "info", "Step 2/7 - Importing repository from GitHub");
       addLog(jobId, "info", `Connecting to ${input.sourceLabel || "selected repository"} and downloading the latest source snapshot`);
-      projectPath = await cloneRepository(input.repoUrl, jobId, input.githubToken);
+      const provider = input.provider || "github";
+      const providerToken = await _tokenForProvider(provider, input.githubSession, input.userId);
+      projectPath = await cloneRepository(input.repoUrl, jobId, providerToken, provider, input.commitSha);
       addLog(jobId, "success", `Repository imported successfully in ${_seconds(Date.now() - cloneStartedAt)}`);
     } else {
       const extractStartedAt = Date.now();
@@ -128,6 +184,7 @@ async function _runJob(jobId, input) {
       useOsv: _bool(input.useOsv, true),
       failOn: input.failOn || "high"
     });
+    await _quarantineCriticalFindings(reqUserForJob(input), result, jobId, addLog);
     const severityCounts = result.summary?.findings_by_severity || {};
     addLog(jobId, "info", "Step 4/9 - Discovering dependency manifests");
     addLog(jobId, "success", `Found ${result.summary?.total_manifests || 0} manifest files and ${result.summary?.total_dependencies || 0} dependencies`);
@@ -242,7 +299,10 @@ module.exports = {
   startZipScan,
   getScanJob,
   getScanJobs,
-  streamScanLogs
+  streamScanLogs,
+  getScanArtifact,
+  getScanGate,
+  runQueuedDependencyScan
 };
 
 async function _githubTokenForUser(githubSession, userId) {
@@ -253,4 +313,44 @@ async function _githubTokenForUser(githubSession, userId) {
     if (account?.accessToken) return account.accessToken;
     throw _error;
   }
+}
+
+async function _quarantineCriticalFindings(actor, result, jobId, log) {
+  const digest = result?.artifact?.artifact_sha256;
+  if (!digest) return;
+  const findings = [
+    ...(result.static_malware_findings || []).filter((finding) => ["critical", "high"].includes(finding.severity)),
+    ...(result.behavior_findings || []).filter((finding) => ["critical", "high"].includes(finding.severity))
+  ];
+  for (const finding of findings.slice(0, 50)) {
+    try {
+      await createQuarantine({
+        findingId: finding.id,
+        artifactDigest: digest,
+        packageName: finding.package_name || null,
+        packageVersion: finding.version || null,
+        severity: finding.severity,
+        status: "blocked",
+        reason: finding.title || "High-confidence malware or malicious behavior finding",
+        evidence: finding.evidence || null,
+        departmentId: actor.departmentId || null
+      }, actor.id);
+      log(jobId, "warning", `Artifact quarantined automatically for ${finding.id}`);
+    } catch (error) {
+      log(jobId, "error", `Automatic quarantine failed for ${finding.id}: ${error.message}`);
+    }
+  }
+}
+
+function reqUserForJob(input) {
+  return { id: input.userId || null, departmentId: input.departmentId || null };
+}
+
+async function _tokenForProvider(provider, session, userId) {
+  if (provider === "github") {
+    return _githubTokenForUser(session, userId);
+  }
+  const token = require("../config/env").webhook.providerTokens[provider];
+  if (!token) throw new Error(`No ${provider} clone credential is configured`);
+  return token;
 }

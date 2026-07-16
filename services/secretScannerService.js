@@ -15,9 +15,19 @@ async function runSecretScan(projectPath, options = {}) {
       fail_on: options.failOn || "high",
       max_depth: options.maxDepth || 14,
       include_low: options.includeLow ?? true,
-      scan_binary_files: options.scanBinaryFiles ?? false
+      scan_binary_files: options.scanBinaryFiles ?? false,
+      include_git_history: options.includeGitHistory ?? true,
+      max_history_commits: options.maxHistoryCommits ?? 100,
+      complete_git_history: options.completeGitHistory ?? false,
+      changed_files: options.changedFiles || null,
+      max_file_bytes: options.maxFileBytes || 5000000,
+      max_files: options.maxFiles || 8000,
+      max_total_bytes: options.maxTotalBytes || 1000000000
     },
-    { timeout: 120000 }
+    {
+      timeout: 120000,
+      headers: { "x-scanner-token": env.scannerApiToken || "" }
+    }
   );
   return {
     ...response.data,

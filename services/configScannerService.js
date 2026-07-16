@@ -14,9 +14,16 @@ async function runConfigScan(projectPath, options = {}) {
       project_path: projectPath,
       fail_on: options.failOn || "high",
       max_depth: options.maxDepth || 12,
-      include_low: options.includeLow ?? true
+      include_low: options.includeLow ?? true,
+      runtime_snapshot_path: options.runtimeSnapshotPath || null,
+      policy_path: options.policyPath || null,
     },
-    { timeout: 120000 }
+    {
+      timeout: Number(process.env.CONFIG_SCANNER_CLIENT_TIMEOUT_MS || 330000),
+      headers: env.configScannerServiceToken
+        ? { "x-scanner-service-token": env.configScannerServiceToken }
+        : undefined
+    }
   );
   return {
     ...response.data,

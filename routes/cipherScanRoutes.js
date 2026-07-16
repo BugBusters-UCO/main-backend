@@ -7,6 +7,7 @@ router.use(requireAuth);
 router.get("/", cipherScanController.getCipherScanJobs);
 router.get("/:jobId", cipherScanController.getCipherScanJob);
 router.get("/:jobId/logs", cipherScanController.streamCipherScanLogs);
+router.post("/:jobId/notify", cipherScanController.notifyCipherScanJob);
 router.post("/github", cipherScanController.startGithubCipherScan);
 router.post("/zip", uploadZip.single("repoZip"), cipherScanController.startZipCipherScan);
 
