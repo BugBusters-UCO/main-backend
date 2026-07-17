@@ -42,7 +42,7 @@ async function cloneRepository(repoUrl, jobId, token, provider = "github", commi
     const parsed = new URL(safeUrl);
     const authValue = provider === "azuredevops"
       ? `Basic ${Buffer.from(`:${token}`).toString("base64")}`
-      : `Bearer ${token}`;
+      : `Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
     gitEnv.GIT_CONFIG_COUNT = "1";
     gitEnv.GIT_CONFIG_KEY_0 = `http.https://${parsed.host}/.extraheader`;
     gitEnv.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: ${authValue}`;
@@ -67,6 +67,10 @@ async function cloneRepository(repoUrl, jobId, token, provider = "github", commi
       });
     }
   } catch (error) {
+    const fs = require("fs");
+    if (fs.existsSync(targetDir)) {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+    }
     const message = sanitizeGitError(error.stderr || error.message || "Git clone failed");
     const cloneError = new Error(message);
     cloneError.statusCode = 502;

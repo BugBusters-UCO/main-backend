@@ -243,7 +243,15 @@ async function _runJob(jobId, input) {
 
 async function notifyCipherScanJob(req, res, next) {
   try {
-    const job = await getJob(req.params.jobId);
+    let job = await getJob(req.params.jobId);
+    
+    if (!job) {
+      const agentJob = await getAgentScan(req.user.id, req.params.jobId);
+      if (agentJob) {
+        job = adaptAgentScanToModule(agentJob, "cipher");
+      }
+    }
+
     if (!job || job.scannerType !== "cipher" || (job.userId && job.userId !== req.user.id)) {
       return res.status(404).json({ message: "Cipher scan job not found" });
     }
