@@ -13,6 +13,7 @@ const QuarantineRecord = require("./QuarantineRecord");
 const AdvisoryFeedState = require("./AdvisoryFeedState");
 const SecretFinding = require("./SecretFinding");
 const SecretRotationAction = require("./SecretRotationAction");
+const AiExplanation = require("./AiExplanation");
 
 function applyAssociations() {
   if (!User || !ScanJob || !GithubAccount || !ImportedRepository) return;
@@ -70,5 +71,6 @@ module.exports = {
   AdvisoryFeedState,
   SecretFinding,
   SecretRotationAction,
+  AiExplanation,
   applyAssociations
 };

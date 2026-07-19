@@ -19,6 +19,7 @@ const iacScanRoutes = require("./iacScanRoutes");
 const findingRoutes = require("./findingRoutes");
 const auditRoutes = require("./auditRoutes");
 const quarantineRoutes = require("./quarantineRoutes");
+const explainRoutes = require("./explainRoutes");
 
 router.use("/health", healthRoutes);
 router.use("/auth", authRoutes);
@@ -39,5 +40,6 @@ router.use("/iac-scans", iacScanRoutes);
 router.use("/findings", findingRoutes);
 router.use("/audit", auditRoutes);
 router.use("/quarantine", quarantineRoutes);
+router.use("/explain", explainRoutes);
 
 module.exports = router;
