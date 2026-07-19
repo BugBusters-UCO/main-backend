@@ -20,7 +20,28 @@ const { spawnAgent, killAgent } = require("../services/spawnService");
 
 async function registerVmAgent(req, res, next) {
   try {
-    res.status(201).json(await registerAgent(req.body || {}));
+    const { mfaCode, ownerEmail, ...agentData } = req.body;
+    if (!mfaCode) return res.status(400).json({ error: "MFA code is required to register." });
+    if (!ownerEmail) return res.status(400).json({ error: "ownerEmail is required to register." });
+
+    const { User } = require("../models");
+    const { decrypt, verifyTotp } = require("../services/mfaService");
+    const env = require("../config/env");
+
+    const user = await User.findOne({ where: { email: ownerEmail } });
+    if (!user) return res.status(404).json({ error: "User not found." });
+
+    if (!user.mfaSecretEncrypted || !user.mfaEnabled) {
+      return res.status(403).json({ error: "MFA must be enabled for this user." });
+    }
+
+    const secret = decrypt(user.mfaSecretEncrypted, env.identity.mfaEncryptionKey);
+    if (!verifyTotp(secret, mfaCode)) {
+      return res.status(401).json({ error: "Invalid MFA code." });
+    }
+
+    const agent = await registerAgent({ ...agentData, ownerEmail });
+    res.status(201).json({ ...agent, token: env.agentToken });
   } catch (error) {
     next(error);
   }
@@ -175,9 +196,26 @@ async function streamAgentScanLogs(req, res, next) {
 
 async function connectAgent(req, res, next) {
   try {
-    const { token } = req.body;
-    if (!token) return res.status(400).json({ error: "Token is required." });
-    res.json(spawnAgent(token, req.user?.email || "auto@bugbusters.local"));
+    const { mfaCode } = req.body;
+    if (!mfaCode) return res.status(400).json({ error: "MFA code is required from your Authenticator app." });
+
+    const { User } = require("../models");
+    const { decrypt, verifyTotp } = require("../services/mfaService");
+    const env = require("../config/env");
+
+    const user = await User.findByPk(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (!user.mfaSecretEncrypted || !user.mfaEnabled) {
+      return res.status(403).json({ error: "MFA must be enabled to connect to a VM agent." });
+    }
+
+    const secret = decrypt(user.mfaSecretEncrypted, env.identity.mfaEncryptionKey);
+    if (!verifyTotp(secret, mfaCode)) {
+      return res.status(401).json({ error: "Invalid MFA code." });
+    }
+
+    res.json(spawnAgent(mfaCode, req.user?.email || "auto@bugbusters.local"));
   } catch (error) {
     next(error);
   }

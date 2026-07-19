@@ -20,7 +20,7 @@ function spawnAgent(token, ownerEmail) {
     scriptPath,
     "-Mode",
     "loop",
-    "-AgentToken",
+    "-MfaCode",
     token,
     "-OwnerEmail",
     ownerEmail

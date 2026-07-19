@@ -33,12 +33,11 @@ module.exports = {
   secretScanQueueDir: path.resolve(rootDir, process.env.SECRET_SCAN_QUEUE_DIR || "workspace/.secret-scan-queue"),
   uploadDir: path.resolve(rootDir, process.env.UPLOAD_DIR || "uploads"),
   dbEnabled: String(process.env.DB_ENABLED || "false").toLowerCase() === "true",
-  databaseUrl: process.env.DATABASE_URL,
-  dbHost: process.env.DB_HOST,
-  dbPort: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
-  dbName: process.env.DB_NAME,
-  dbUser: process.env.DB_USER,
-  dbPassword: process.env.DB_PASSWORD,
+  databaseHost: process.env.DB_HOST,
+  databasePort: Number(process.env.DB_PORT || 6543),
+  databaseName: process.env.DB_NAME,
+  databaseUser: process.env.DB_USER,
+  databasePassword: process.env.DB_PASSWORD,
   databaseSsl: String(process.env.DB_SSL || "true").toLowerCase() === "true",
   redis: {
     enabled: String(process.env.REDIS_ENABLED || "false").toLowerCase() === "true"

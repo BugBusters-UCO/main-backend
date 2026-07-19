@@ -84,6 +84,28 @@ async function verifyMfa(req, res, next) {
   } catch (error) { return next(error); }
 }
 
+async function getMfaSecret(req, res, next) {
+  try {
+    requireUserModel();
+    const user = await User.findByPk(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    
+    let secret;
+    if (user.mfaSecretEncrypted) {
+      secret = decrypt(user.mfaSecretEncrypted, env.identity.mfaEncryptionKey);
+    } else {
+      // Auto-generate if it doesn't exist
+      secret = generateSecret();
+      await user.update({ 
+        mfaSecretEncrypted: encrypt(secret, env.identity.mfaEncryptionKey), 
+        mfaEnabled: true 
+      });
+    }
+    
+    return res.json({ secret });
+  } catch (error) { return next(error); }
+}
+
 function _authPayload(user, mfaVerified = null) {
   const safeUser = {
     id: user.id,
@@ -98,4 +120,4 @@ function _authPayload(user, mfaVerified = null) {
   return { token, user: safeUser };
 }
 
-module.exports = { beginMfa, login, me, register, verifyMfa };
+module.exports = { beginMfa, login, me, register, verifyMfa, getMfaSecret };

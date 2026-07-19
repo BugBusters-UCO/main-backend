@@ -9,7 +9,7 @@ function loadSequelize() {
 }
 
 function createSequelizeInstance() {
-  if (!env.databaseUrl && (!env.dbHost || !env.dbName || !env.dbUser)) {
+  if (!env.databaseHost || !env.databaseName || !env.databaseUser) {
     return null;
   }
 
@@ -19,7 +19,9 @@ function createSequelizeInstance() {
   }
 
   const { Sequelize } = sequelizePackage;
-  const options = {
+  return new Sequelize(env.databaseName, env.databaseUser, env.databasePassword, {
+    host: env.databaseHost,
+    port: env.databasePort,
     dialect: "postgres",
     dialectOptions: env.databaseSsl
       ? {
@@ -30,15 +32,7 @@ function createSequelizeInstance() {
         }
       : {},
     logging: false,
-  };
-
-  if (env.databaseUrl) {
-    return new Sequelize(env.databaseUrl, options);
-  } else {
-    options.host = env.dbHost;
-    options.port = env.dbPort;
-    return new Sequelize(env.dbName, env.dbUser, env.dbPassword, options);
-  }
+  });
 }
 
 const sequelize = createSequelizeInstance();
@@ -49,16 +43,16 @@ async function connectDatabase() {
     return null;
   }
   if (!sequelize) {
-    throw new Error("Install sequelize, pg, and pg-hstore and set DATABASE_URL (or DB_HOST, DB_NAME, DB_USER, DB_PASSWORD) before enabling DB_ENABLED=true");
+    throw new Error("Install sequelize, pg, and pg-hstore and set database configuration variables before enabling DB_ENABLED=true");
   }
   await sequelize.authenticate();
-  require("../models");
-  await sequelize.sync({ alter: env.nodeEnv !== "production" });
   await ensureScanJobScannerTypeEnum();
   await ensureScanJobCancellationSchema();
   await ensureScanJobSourceTypeEnum();
   await ensureUserRoleEnum();
   await ensureScheduledScansImportedRepositoryNullable();
+  require("../models");
+  await sequelize.sync({ alter: env.nodeEnv !== "production" });
   console.log("PostgreSQL connected through Sequelize.");
   return sequelize;
 }
