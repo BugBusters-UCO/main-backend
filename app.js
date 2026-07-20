@@ -9,6 +9,14 @@ const { requestLogger } = require("./middleware/requestLogger");
 
 const app = express();
 
+// The backend is reached through the local reverse proxy in production. Trust
+// only that hop so Express can safely use X-Forwarded-For for client IPs.
+const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 1);
+if (!Number.isInteger(trustProxyHops) || trustProxyHops < 0) {
+  throw new Error("TRUST_PROXY_HOPS must be a non-negative integer");
+}
+app.set("trust proxy", trustProxyHops);
+
 app.use(
   helmet({
     contentSecurityPolicy: false
