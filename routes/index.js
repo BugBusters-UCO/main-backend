@@ -20,6 +20,7 @@ const findingRoutes = require("./findingRoutes");
 const auditRoutes = require("./auditRoutes");
 const quarantineRoutes = require("./quarantineRoutes");
 const explainRoutes = require("./explainRoutes");
+const chatRoutes = require("./chatRoutes");
 
 const proxyRoutes = require("./proxyRoutes");
 
@@ -43,6 +44,7 @@ router.use("/findings", findingRoutes);
 router.use("/audit", auditRoutes);
 router.use("/quarantine", quarantineRoutes);
 router.use("/explain", explainRoutes);
+router.use("/chat", chatRoutes);
 router.use("/proxy", proxyRoutes);
 
 module.exports = router;
