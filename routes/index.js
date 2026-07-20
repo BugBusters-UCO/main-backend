@@ -21,6 +21,8 @@ const auditRoutes = require("./auditRoutes");
 const quarantineRoutes = require("./quarantineRoutes");
 const explainRoutes = require("./explainRoutes");
 
+const proxyRoutes = require("./proxyRoutes");
+
 router.use("/health", healthRoutes);
 router.use("/auth", authRoutes);
 router.use("/scans", scanRoutes);
@@ -41,5 +43,6 @@ router.use("/findings", findingRoutes);
 router.use("/audit", auditRoutes);
 router.use("/quarantine", quarantineRoutes);
 router.use("/explain", explainRoutes);
+router.use("/proxy", proxyRoutes);
 
 module.exports = router;

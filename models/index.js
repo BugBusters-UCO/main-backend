@@ -14,6 +14,7 @@ const AdvisoryFeedState = require("./AdvisoryFeedState");
 const SecretFinding = require("./SecretFinding");
 const SecretRotationAction = require("./SecretRotationAction");
 const AiExplanation = require("./AiExplanation");
+const ProxyAlert = require("./ProxyAlert");
 
 function applyAssociations() {
   if (!User || !ScanJob || !GithubAccount || !ImportedRepository) return;
@@ -72,5 +73,6 @@ module.exports = {
   SecretFinding,
   SecretRotationAction,
   AiExplanation,
+  ProxyAlert,
   applyAssociations
 };
