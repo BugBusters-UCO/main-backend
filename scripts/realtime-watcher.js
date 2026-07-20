@@ -5,7 +5,8 @@ const os = require('os');
 
 // Configuration
 const WATCH_DIR = process.argv[2] || path.join(__dirname, '..', 'workspace'); 
-const SCANNER_API = 'http://127.0.0.1:8002/api/v1/scans';
+const CONFIG_SCANNER_API = 'http://127.0.0.1:8002/api/v1/scans';
+const SECRET_SCANNER_API = 'http://127.0.0.1:8003/api/v1/scans';
 const ALERTS_API = 'http://127.0.0.1:5000/api/proxy/alerts';
 
 // Ensure watch directory exists
@@ -38,27 +39,37 @@ fs.watch(WATCH_DIR, { recursive: true }, (eventType, filename) => {
         }
 
         console.log(`\n[WATCHER] ⚠️ File modification detected: ${filename}`);
-        console.log(`[SCAN] Instantly scanning ${filename} for vulnerabilities...`);
+        console.log(`[SCAN] Instantly scanning ${filename} for vulnerabilities and secrets...`);
 
         try {
-            // We pass the workspace directory to the scanner and let it scan. 
-            // In a production EDR, we might pass just the specific file.
-            // But since the scanner takes a project_path, we pass the workspace root.
-            const scanResult = await axios.post(SCANNER_API, {
-                project_path: WATCH_DIR,
-                max_depth: 3
-            });
+            // Run both scanners concurrently
+            const [configResult, secretResult] = await Promise.all([
+                axios.post(CONFIG_SCANNER_API, {
+                    project_path: WATCH_DIR,
+                    max_depth: 3
+                }).catch(e => ({ data: { findings: [] } })),
+                axios.post(SECRET_SCANNER_API, {
+                    project_path: WATCH_DIR,
+                    max_depth: 3,
+                    include_git_history: false
+                }).catch(e => ({ data: { findings: [] } }))
+            ]);
 
             // Filter findings that only relate to the modified file
-            const fileFindings = scanResult.data.findings.filter(f => 
+            const fileConfigFindings = configResult.data.findings.filter(f => 
+                f.file_path.endsWith(filename) || filename.endsWith(f.file_path)
+            );
+            
+            const fileSecretFindings = secretResult.data.findings.filter(f => 
                 f.file_path.endsWith(filename) || filename.endsWith(f.file_path)
             );
 
-            const totalFindings = fileFindings.length;
+            const allFindings = [...fileConfigFindings, ...fileSecretFindings];
+            const totalFindings = allFindings.length;
 
             if (totalFindings > 0) {
                 console.log(`\n[BLOCK] 🚨 INSIDER THREAT / CODEBASE COMPROMISE DETECTED!`);
-                console.log(`[BLOCK] ${filename} contains ${totalFindings} severe misconfigurations.`);
+                console.log(`[BLOCK] ${filename} contains ${totalFindings} severe issues (secrets/misconfigurations).`);
                 console.log(`[BLOCK] Triggering Dashboard Alert...\n`);
 
                 const machineInfo = {
@@ -76,7 +87,7 @@ fs.watch(WATCH_DIR, { recursive: true }, (eventType, filename) => {
                         error: `Local Endpoint Scanner found ${totalFindings} issues.`,
                         threatLevel: "CRITICAL",
                         origin: machineInfo,
-                        details: fileFindings
+                        details: allFindings
                     }
                 });
 
