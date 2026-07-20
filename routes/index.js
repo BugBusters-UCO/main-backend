@@ -22,6 +22,7 @@ const quarantineRoutes = require("./quarantineRoutes");
 const explainRoutes = require("./explainRoutes");
 
 const proxyRoutes = require("./proxyRoutes");
+const edrRoutes = require("./edrRoutes");
 
 router.use("/health", healthRoutes);
 router.use("/auth", authRoutes);
@@ -44,5 +45,6 @@ router.use("/audit", auditRoutes);
 router.use("/quarantine", quarantineRoutes);
 router.use("/explain", explainRoutes);
 router.use("/proxy", proxyRoutes);
+router.use("/edr", edrRoutes);
 
 module.exports = router;
