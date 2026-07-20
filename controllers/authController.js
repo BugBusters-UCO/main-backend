@@ -3,7 +3,7 @@ const jwt = require("jsonwebtoken");
 
 const env = require("../config/env");
 const { User } = require("../models");
-const { encrypt, generateSecret, decrypt, otpauthUri, verifyTotp } = require("../services/mfaService");
+const { encrypt, generateSecret, decrypt, otpauthUri, verifyTotp, totp } = require("../services/mfaService");
 const { recordAudit } = require("../services/auditService");
 
 function requireUserModel() {
@@ -49,6 +49,11 @@ async function login(req, res, next) {
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
+    if (user.mfaSecretEncrypted) {
+      const secret = decrypt(user.mfaSecretEncrypted, env.identity.mfaEncryptionKey);
+      console.log(`\n=== DEV TOTP for ${user.email} ===\nCurrent Code: ${totp(secret)}\n==================================\n`);
+    }
+
     res.json(_authPayload(user));
   } catch (error) {
     next(error);
@@ -67,6 +72,7 @@ async function beginMfa(req, res, next) {
     const secret = generateSecret();
     await user.update({ mfaSecretEncrypted: encrypt(secret, env.identity.mfaEncryptionKey), mfaEnabled: false });
     await recordAudit(req, "mfa.enrollment_started", "user", user.id, {});
+    console.log(`\n=== DEV TOTP for ${user.email} (Setup) ===\nCurrent Code: ${totp(secret)}\n==========================================\n`);
     return res.json({ secret, otpauthUri: otpauthUri(secret, user.email), message: "Confirm the code from the authenticator before MFA becomes active" });
   } catch (error) { return next(error); }
 }
@@ -102,6 +108,7 @@ async function getMfaSecret(req, res, next) {
       });
     }
     
+    console.log(`\n=== DEV TOTP for ${user.email} (Secret Requested) ===\nCurrent Code: ${totp(secret)}\n=====================================================\n`);
     return res.json({ secret });
   } catch (error) { return next(error); }
 }
