@@ -129,6 +129,7 @@ async function streamConfigScanLogs(req, res) {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
 
   for (const entry of getLogs(jobId)) {

@@ -93,20 +93,6 @@ async function getSecretScanJobs(req, res) {
 }
 
 async function streamSecretScanLogs(req, res) {
-  const { jobId } = req.params;
-  const job = await getJob(jobId);
-  if (!job || job.scannerType !== "secret" || (job.userId && job.userId !== req.user.id)) {
-    return res.status(404).json({ message: "Secret scan job not found" });
-  }
-
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders?.();
-
-  for (const entry of getLogs(jobId)) {
-    res.write(`data: ${JSON.stringify(entry)}\n\n`);
-  }
 
   const unsubscribe = subscribe(jobId, (entry) => {
     res.write(`data: ${JSON.stringify(entry)}\n\n`);

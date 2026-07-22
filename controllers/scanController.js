@@ -100,6 +100,7 @@ async function getScanJobs(req, res) {
     .map(job => adaptAgentScanToModule(job, "dependency"))
     .filter(Boolean);
 
+
   const allJobs = [...cloudJobs, ...adaptedAgentJobs].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   res.json(allJobs);
 }
@@ -114,6 +115,7 @@ async function streamScanLogs(req, res) {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
 
   for (const entry of getLogs(jobId)) {
