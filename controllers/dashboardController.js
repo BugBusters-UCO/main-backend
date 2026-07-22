@@ -72,14 +72,14 @@ async function getDashboardStats(req, res, next) {
       }
 
       if (scan.result) {
-        if (scan.scannerType === "dependency" && Array.isArray(scan.result.vulnerabilities)) {
-          aggregateSeverities(scan.result.vulnerabilities, "dependency");
-        } else if (scan.scannerType === "config" && Array.isArray(scan.result.misconfigurations)) {
-          aggregateSeverities(scan.result.misconfigurations, "config");
-        } else if (scan.scannerType === "secret" && Array.isArray(scan.result.secrets)) {
-          aggregateSeverities(scan.result.secrets, "secret");
-        } else if (scan.scannerType === "cipher" && Array.isArray(scan.result.weaknesses)) {
-          aggregateSeverities(scan.result.weaknesses, "cipher");
+        if (scan.scannerType === "dependency" && Array.isArray(scan.result.findings)) {
+          aggregateSeverities(scan.result.findings, "dependency");
+        } else if (scan.scannerType === "config" && Array.isArray(scan.result.findings)) {
+          aggregateSeverities(scan.result.findings, "config");
+        } else if (scan.scannerType === "secret" && Array.isArray(scan.result.findings)) {
+          aggregateSeverities(scan.result.findings, "secret");
+        } else if (scan.scannerType === "cipher" && Array.isArray(scan.result.findings)) {
+          aggregateSeverities(scan.result.findings, "cipher");
         }
       }
     });
@@ -104,14 +104,14 @@ async function getDashboardStats(req, res, next) {
         agentScan.result.reports.forEach(report => {
           const mod = report.module;
           if (report.result) {
-            if (mod === "dependency" && Array.isArray(report.result.vulnerabilities)) {
-              aggregateSeverities(report.result.vulnerabilities, "dependency");
-            } else if (mod === "config" && Array.isArray(report.result.misconfigurations)) {
-              aggregateSeverities(report.result.misconfigurations, "config");
-            } else if (mod === "secret" && Array.isArray(report.result.secrets)) {
-              aggregateSeverities(report.result.secrets, "secret");
-            } else if (mod === "cipher" && Array.isArray(report.result.weaknesses)) {
-              aggregateSeverities(report.result.weaknesses, "cipher");
+            if (mod === "dependency" && Array.isArray(report.result.findings)) {
+              aggregateSeverities(report.result.findings, "dependency");
+            } else if (mod === "config" && Array.isArray(report.result.findings)) {
+              aggregateSeverities(report.result.findings, "config");
+            } else if (mod === "secret" && Array.isArray(report.result.findings)) {
+              aggregateSeverities(report.result.findings, "secret");
+            } else if (mod === "cipher" && Array.isArray(report.result.findings)) {
+              aggregateSeverities(report.result.findings, "cipher");
             }
           }
         });
@@ -185,10 +185,10 @@ async function getDashboardStats(req, res, next) {
     scans.forEach(scan => {
       let items = [];
       if (scan.result) {
-          if (scan.scannerType === "dependency") items = scan.result.vulnerabilities || [];
-          if (scan.scannerType === "config") items = scan.result.misconfigurations || [];
-          if (scan.scannerType === "secret") items = scan.result.secrets || [];
-          if (scan.scannerType === "cipher") items = scan.result.weaknesses || [];
+          if (scan.scannerType === "dependency") items = scan.result.findings || [];
+          if (scan.scannerType === "config") items = scan.result.findings || [];
+          if (scan.scannerType === "secret") items = scan.result.findings || [];
+          if (scan.scannerType === "cipher") items = scan.result.findings || [];
       }
       processTrendAndRisks(scan.sourceLabel, scan.createdAt, items);
     });
@@ -198,10 +198,10 @@ async function getDashboardStats(req, res, next) {
       if (agentScan.result && Array.isArray(agentScan.result.reports)) {
         agentScan.result.reports.forEach(report => {
           if (report.result) {
-            if (report.module === "dependency" && report.result.vulnerabilities) items = items.concat(report.result.vulnerabilities);
-            if (report.module === "config" && report.result.misconfigurations) items = items.concat(report.result.misconfigurations);
-            if (report.module === "secret" && report.result.secrets) items = items.concat(report.result.secrets);
-            if (report.module === "cipher" && report.result.weaknesses) items = items.concat(report.result.weaknesses);
+            if (report.module === "dependency" && report.result.findings) items = items.concat(report.result.findings);
+            if (report.module === "config" && report.result.findings) items = items.concat(report.result.findings);
+            if (report.module === "secret" && report.result.findings) items = items.concat(report.result.findings);
+            if (report.module === "cipher" && report.result.findings) items = items.concat(report.result.findings);
           }
         });
       }
