@@ -22,7 +22,11 @@ app.use(
     contentSecurityPolicy: false
   })
 );
-app.use(cors({ origin: process.env.CLIENT_ORIGIN || true, credentials: true }));
+const clientOrigin = process.env.CLIENT_ORIGIN;
+const origin = clientOrigin 
+  ? (clientOrigin.includes(',') ? clientOrigin.split(',').map(s => s.trim()) : clientOrigin) 
+  : true;
+app.use(cors({ origin, credentials: true }));
 app.use(express.json({
   limit: "50mb",
   verify: (req, _res, buffer) => {
