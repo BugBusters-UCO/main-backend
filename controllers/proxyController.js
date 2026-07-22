@@ -13,7 +13,13 @@ function eventsStream(req, res) {
     // Add this client to the pool
     clients.push(res);
 
+    // Send a heartbeat every 15 seconds
+    const heartbeat = setInterval(() => {
+        res.write(':\n\n'); 
+    }, 15000);
+
     req.on("close", () => {
+        clearInterval(heartbeat);
         clients = clients.filter(client => client !== res);
     });
 }
