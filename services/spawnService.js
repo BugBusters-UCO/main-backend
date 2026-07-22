@@ -26,9 +26,11 @@ function spawnAgent(token, ownerEmail) {
     ownerEmail
   ];
 
-  console.log(`Spawning local VM agent: powershell ${args.join(" ")}`);
+  console.log(`Spawning local VM agent: ${args.join(" ")}`);
   
-  activeAgentProcess = spawn("powershell.exe", args, {
+  const executable = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
+
+  activeAgentProcess = spawn(executable, args, {
     detached: false, // Keep it attached to the backend lifecycle or manage it here
     stdio: "pipe"
   });
