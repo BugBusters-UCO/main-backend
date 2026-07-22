@@ -11,28 +11,31 @@ function spawnAgent(token, ownerEmail) {
     activeAgentProcess = null;
   }
 
-  const scriptPath = path.resolve(__dirname, "../../vm-agent/bugbusters-agent.ps1");
-  const args = [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    scriptPath,
-    "-Mode",
-    "loop",
-    "-MfaCode",
-    token,
-    "-OwnerEmail",
-    ownerEmail
-  ];
+  const isWindows = process.platform === 'win32';
+  const scriptName = isWindows ? "bugbusters-agent.ps1" : "bugbusters-agent.sh";
+  const scriptPath = path.resolve(__dirname, `../../vm-agent/${scriptName}`);
+  const executable = isWindows ? 'powershell.exe' : 'bash';
 
-  console.log(`Spawning local VM agent: ${args.join(" ")}`);
+  const args = [
+    ...(isWindows ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"] : []),
+    scriptPath,
+    isWindows ? "-Mode" : "loop", // Bash uses arg $1 as mode, PS uses -Mode
+    isWindows ? "loop" : "",
+    ...(isWindows ? ["-MfaCode", token, "-OwnerEmail", ownerEmail] : [])
+  ].filter(Boolean);
+
+  console.log(`Spawning local VM agent: ${executable} ${args.join(" ")}`);
   
-  const executable = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
+  // For the bash script, we pass environment variables instead of args
+  const env = Object.assign({}, process.env, {
+    BUGBUSTERS_MFA_CODE: token,
+    BUGBUSTERS_OWNER_EMAIL: ownerEmail
+  });
 
   activeAgentProcess = spawn(executable, args, {
     detached: false, // Keep it attached to the backend lifecycle or manage it here
-    stdio: "pipe"
+    stdio: "pipe",
+    env: env
   });
 
   activeAgentProcess.stdout.on("data", (data) => {
